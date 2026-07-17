@@ -1,6 +1,6 @@
 # AI Assistant Rules
 
-## All AI-generated code in this codebase MUST be marked. 
+## Marking AI-generated code
 
 Every identifier an AI adds MUST be suffixed with `_AI` — functions,
 variables, parameters, types, members, enums and enumerators, macros,
@@ -31,3 +31,9 @@ struct Handler_AI : Base {
     void onEvent() override {}          // _AI  (name fixed by Base)
 };
 ```
+
+## Git usage
+
+AI assistants should add their changes to git stage, and only theirs.
+AI assistants MUST NOT create commits.
+ 
