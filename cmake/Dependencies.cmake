@@ -5,7 +5,6 @@ include(FetchContent)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
-find_package(glm REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -35,7 +34,19 @@ FetchContent_Declare(implot
     GIT_SHALLOW    TRUE
 )
 
-FetchContent_MakeAvailable(VulkanMemoryAllocator imgui implot)
+# hlslpp — SIMD vector/matrix math (replaces glm). Header-only.
+FetchContent_Declare(hlslpp
+    GIT_REPOSITORY https://github.com/redorav/hlslpp.git
+    GIT_TAG        3.9
+    GIT_SHALLOW    TRUE
+)
+
+FetchContent_MakeAvailable(VulkanMemoryAllocator imgui implot hlslpp)
+
+# hlslpp ships no CMakeLists.txt (like imgui/implot), so MakeAvailable only
+# checks it out; expose the header directory as an interface target.
+add_library(hlslpp INTERFACE)
+target_include_directories(hlslpp SYSTEM INTERFACE ${hlslpp_SOURCE_DIR}/include)
 
 # --- imgui + implot, with the Vulkan/GLFW backends ---
 

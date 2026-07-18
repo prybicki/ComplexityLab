@@ -21,14 +21,15 @@ sudo apt-get update
 sudo apt-get install -y \
     curl \
     libvulkan-dev vulkan-validationlayers \
-    libglfw3-dev libspdlog-dev libglm-dev libgtest-dev libyaml-cpp-dev \
+    libglfw3-dev libspdlog-dev libgtest-dev libyaml-cpp-dev \
     libavcodec-dev libavformat-dev libavutil-dev \
     libwayland-dev libxkbcommon-dev \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
     libgl-dev
 # curl                        — downloads Slang below.
-# libvulkan-dev, glfw, spdlog, glm, gtest, yaml-cpp
+# libvulkan-dev, glfw, spdlog, gtest, yaml-cpp
 #                             — resolved by find_package() in cmake/Dependencies.cmake.
+#                               (hlslpp replaces glm and is fetched by CMake, not apt.)
 # libav* (ffmpeg)             — h.265/MKV recording, resolved there via pkg_check_modules.
 # wayland, xkbcommon, x11, gl — GLFW's windowing backends and headers.
 
