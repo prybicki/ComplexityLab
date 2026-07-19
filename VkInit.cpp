@@ -31,8 +31,6 @@ namespace {
 bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers);
 std::vector<const char*> getRequiredExtensions(bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions);
 vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo();
-void createInstanceHandle(Instance& self, const InstanceConfig& config_AI);
-void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI);
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -93,9 +91,53 @@ std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
     config.enableValidationLayers = false;
 #endif
 
-    createInstanceHandle(*self, config);
+    {
+        if (config.enableValidationLayers && !checkInstanceLayerSupport_AI(config.validationLayers)) {
+            throw std::runtime_error("Validation layers requested but not available!");
+        }
+
+        auto appInfo = vk::ApplicationInfo()
+            .setPApplicationName(config.applicationName.c_str())
+            .setApplicationVersion(config.applicationVersion)
+            .setPEngineName("No Engine")
+            .setEngineVersion(VK_MAKE_VERSION(1, 0, 0))
+            .setApiVersion(VK_API_VERSION_1_3);
+
+        auto extensions = getRequiredExtensions(config.enableValidationLayers, config.headless, config.requiredExtensions);
+
+        auto createInfo = vk::InstanceCreateInfo()
+            .setPApplicationInfo(&appInfo)
+            .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
+            .setPpEnabledExtensionNames(extensions.data());
+
+        auto debugCreateInfo = makeDebugMessengerCreateInfo();
+
+        // Synchronization validation: catches missing barriers, cross-queue sync
+        // errors, and external-sync violations. Lifetime must outlast the create
+        // call, hence stack-local in this function scope.
+        vk::ValidationFeaturesEXT      validationFeatures;
+        vk::ValidationFeatureEnableEXT enabledFeatures[] = {
+            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+        };
+
+        if (config.enableValidationLayers) {
+            createInfo.setEnabledLayerCount(static_cast<uint32_t>(config.validationLayers.size()))
+                      .setPpEnabledLayerNames(config.validationLayers.data());
+
+            validationFeatures.setEnabledValidationFeatures(enabledFeatures);
+            debugCreateInfo.setPNext(&validationFeatures);
+            createInfo.setPNext(&debugCreateInfo);
+        }
+
+        self->instance = vk::createInstanceUnique(createInfo);
+    }
+
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*self->instance);
-    setupDebugMessenger(*self, config);
+
+    if (config.enableValidationLayers) {
+        auto createInfo = makeDebugMessengerCreateInfo();
+        self->debugMessenger = self->instance->createDebugUtilsMessengerEXTUnique(createInfo);
+    }
     return self;
 }
 
@@ -241,53 +283,6 @@ vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() {
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
         .setPfnUserCallback(debugCallback);
-}
-
-void createInstanceHandle(Instance& self, const InstanceConfig& config_AI) {
-    if (config_AI.enableValidationLayers && !checkInstanceLayerSupport_AI(config_AI.validationLayers)) {
-        throw std::runtime_error("Validation layers requested but not available!");
-    }
-
-    auto appInfo = vk::ApplicationInfo()
-        .setPApplicationName(config_AI.applicationName.c_str())
-        .setApplicationVersion(config_AI.applicationVersion)
-        .setPEngineName("No Engine")
-        .setEngineVersion(VK_MAKE_VERSION(1, 0, 0))
-        .setApiVersion(VK_API_VERSION_1_3);
-
-    auto extensions = getRequiredExtensions(config_AI.enableValidationLayers, config_AI.headless, config_AI.requiredExtensions);
-
-    auto createInfo = vk::InstanceCreateInfo()
-        .setPApplicationInfo(&appInfo)
-        .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
-        .setPpEnabledExtensionNames(extensions.data());
-
-    auto debugCreateInfo = makeDebugMessengerCreateInfo();
-
-    // Synchronization validation: catches missing barriers, cross-queue sync
-    // errors, and external-sync violations. Lifetime must outlast the create
-    // call, hence stack-local in this function scope.
-    vk::ValidationFeaturesEXT      validationFeatures;
-    vk::ValidationFeatureEnableEXT enabledFeatures[] = {
-        vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
-    };
-
-    if (config_AI.enableValidationLayers) {
-        createInfo.setEnabledLayerCount(static_cast<uint32_t>(config_AI.validationLayers.size()))
-                  .setPpEnabledLayerNames(config_AI.validationLayers.data());
-
-        validationFeatures.setEnabledValidationFeatures(enabledFeatures);
-        debugCreateInfo.setPNext(&validationFeatures);
-        createInfo.setPNext(&debugCreateInfo);
-    }
-
-    self.instance = vk::createInstanceUnique(createInfo);
-}
-
-void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI) {
-    if (!config_AI.enableValidationLayers) return;
-    auto createInfo = makeDebugMessengerCreateInfo();
-    self.debugMessenger = self.instance->createDebugUtilsMessengerEXTUnique(createInfo);
 }
 
 // ───────────────────────── queue families ──────────────────────────
