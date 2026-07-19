@@ -162,12 +162,11 @@ std::unique_ptr<Fact<Device>> Device::init(Proof<const Instance> instance,
     return self;
 }
 
-Device::~Device() {
-    // Drain the GPU before vkDestroyDevice (the spec requires every queue idle at
-    // device destruction). Raw waitIdle: the mutex-locking drain that guarded
-    // concurrent submits belongs to the runtime queue module, and at init teardown
-    // no work is in flight.
-    if (device) device->waitIdle();
+Device::~Device()
+{
+    if (device) {
+        device->waitIdle();
+    }
 }
 
 CommandPool CommandPool::init(Proof<const Device> device) {
@@ -194,10 +193,6 @@ Swapchain Swapchain::init(Proof<const Device> device,
     spdlog::info("Swapchain: {}x{}, {} images", self.extent.width, self.extent.height, self.images.size());
     return self;
 }
-
-vk::Instance rawHandle(const Instance& instance) { return *instance.instance; }
-vk::SurfaceKHR rawHandle(const WindowSurface& surface) { return *surface.surface; }
-vk::Device   rawHandle(const Device& device)     { return *device.device; }
 
 //══════════════════════ internal: helper definitions ══════════════════════
 
