@@ -149,20 +149,6 @@ Instance Instance::init(Proof<const GlfwInitialization>)
     return self;
 }
 
-DeviceConfig::DeviceConfig() {
-    requiredExtensions = {
-        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
-    };
-    vulkan11.shaderDrawParameters     = VK_TRUE;
-    vulkan12.bufferDeviceAddress      = VK_TRUE;
-    vulkan12.timelineSemaphore        = VK_TRUE;
-    sync2.synchronization2            = VK_TRUE;
-    dynamicRendering.dynamicRendering = VK_TRUE;
-}
-
-
 vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, const GlfwWindow& window) {
     VkSurfaceKHR rawSurface;
     if (glfwCreateWindowSurface(VkInstance(*instance.instance), window.windowHandle, nullptr, &rawSurface) != VK_SUCCESS)
@@ -338,15 +324,12 @@ bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate) {
         swapChainAdequate = !formats.empty() && !presentModes.empty();
     }
 
-    // ASSUMED, not checked here: the canonical baseline feature CHAIN
-    // (timelineSemaphore / bufferDeviceAddress / sync2 / dynamicRendering, set by
-    // DeviceConfig()) — a GPU missing one is deemed "suitable" and then throws at
-    // createLogicalDevice rather than falling through to the next candidate. The
-    // baseline is a hard requirement, so a missing baseline feature is fatal, not
-    // a skip. Only the Vulkan 1.0 features below and the checkFeatureSupport hook
-    // gate candidate selection.
-    auto supportedFeatures = candidate.getFeatures();
-    const auto* required  = reinterpret_cast<const VkBool32*>(&self.config.features);
+    DeviceConfig::FeatureChain supportedFeatureChain;
+    candidate.getFeatures2(&supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>());
+
+    const auto& requiredFeatures = self.config.featureChain.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& supportedFeatures = supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto* required  = reinterpret_cast<const VkBool32*>(&requiredFeatures);
     const auto* supported = reinterpret_cast<const VkBool32*>(&supportedFeatures);
     constexpr size_t featureCount = sizeof(vk::PhysicalDeviceFeatures) / sizeof(VkBool32);
     bool featuresSupported = true;
@@ -354,9 +337,19 @@ bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate) {
         if (required[i] && !supported[i]) { featuresSupported = false; break; }
     }
 
-    // Caller-provided check for pNext-chain features (Vulkan 1.1+, extensions).
-    if (featuresSupported && self.config.checkFeatureSupport)
-        featuresSupported = self.config.checkFeatureSupport(candidate);
+    featuresSupported = featuresSupported
+        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters)
+        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore
+            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
+        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress
+            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress)
+        && (!self.config.featureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2
+            || supportedFeatureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2)
+        && (!self.config.featureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering
+            || supportedFeatureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering)
+        && (!self.config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
+            || supportedFeatureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject);
 
     // Headless: only need graphics. With surface: need graphics + present.
     bool queuesOk = self.surface.has_value() ? familiesComplete(indices) : hasGraphics(indices);
@@ -408,23 +401,13 @@ void createLogicalDevice(Device& self) {
             vk::DeviceQueueCreateInfo().setQueueFamilyIndex(queueFamily).setQueueCount(1).setPQueuePriorities(&queuePriority));
     }
 
-    // Build the pNext graph from config's own struct instances, so pointers
-    // always refer to this config's current memory — safe across copies/moves.
-    self.config.vulkan11.pNext         = &self.config.sync2;
-    self.config.sync2.pNext            = &self.config.vulkan12;
-    self.config.vulkan12.pNext         = &self.config.dynamicRendering;
-    self.config.dynamicRendering.pNext = nullptr;
-    auto* tail = reinterpret_cast<vk::BaseOutStructure*>(&self.config.dynamicRendering);
-    for (auto* extra : self.config.extras) { tail->pNext = extra; tail = extra; }
-    tail->pNext = nullptr;
-
     auto createInfo = vk::DeviceCreateInfo()
         .setQueueCreateInfoCount(static_cast<uint32_t>(queueCreateInfos.size()))
         .setPQueueCreateInfos(queueCreateInfos.data())
-        .setPEnabledFeatures(&self.config.features)
+        .setPEnabledFeatures(nullptr)
         .setEnabledExtensionCount(static_cast<uint32_t>(self.config.requiredExtensions.size()))
         .setPpEnabledExtensionNames(self.config.requiredExtensions.data())
-        .setPNext(&self.config.vulkan11);
+        .setPNext(&self.config.featureChain.get<vk::PhysicalDeviceFeatures2>());
 
     self.device = self.physicalDevice.createDeviceUnique(createInfo);
 

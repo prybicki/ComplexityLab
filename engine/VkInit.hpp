@@ -45,7 +45,6 @@
 #include <vulkan/vulkan.hpp>
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -71,40 +70,69 @@ struct QueueFamilyIndices {
 };
 
 struct DeviceConfig {
-    // Extensions the runtime requires. Baseline is populated by the default
-    // constructor; callers may append scene-specific extensions after.
-    std::vector<const char*> requiredExtensions;
+    using FeatureChain = vk::StructureChain<
+        vk::PhysicalDeviceFeatures2,
+        vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceSynchronization2Features,
+        vk::PhysicalDeviceVulkan12Features,
+        vk::PhysicalDeviceDynamicRenderingFeatures,
+        vk::PhysicalDeviceShaderObjectFeaturesEXT
+    >;
 
-    // Vulkan 1.0 features. Caller sets additional flags on top of the empty
-    // baseline.
-    vk::PhysicalDeviceFeatures features = {};
+    // Extensions the runtime requires. Callers may append scene-specific
+    // extensions after the baseline.
+    std::vector<const char*> requiredExtensions = {
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+        VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+    };
 
-    // Canonical runtime feature chain. Baseline flags are set by the default
-    // constructor (shaderDrawParameters, bufferDeviceAddress, timelineSemaphore,
-    // synchronization2, dynamicRendering). Callers may enable additional flags on
-    // these structs. Do NOT set pNext; chain wiring is managed internally by
-    // createLogicalDevice, rebuilt from scratch so Config stays safe to copy,
-    // move, and default-construct.
-    vk::PhysicalDeviceVulkan11Features         vulkan11         = {};
-    vk::PhysicalDeviceVulkan12Features         vulkan12         = {};
-    vk::PhysicalDeviceSynchronization2Features sync2            = {};
-    vk::PhysicalDeviceDynamicRenderingFeatures dynamicRendering = {};
-
-    // Scene-specific feature structs to layer on top of the canonical chain. Each
-    // pointee's pNext is overwritten during device creation; callers set only the
-    // feature flags. Pointees must outlive the makeDevice call.
-    std::vector<vk::BaseOutStructure*> extras;
-
-    // If provided, called during device selection to verify a physical device
-    // supports scene-specific features beyond the baseline chain. Return true if
-    // the device is acceptable.
-    std::function<bool(vk::PhysicalDevice)> checkFeatureSupport = nullptr;
-
-    // Establishes the canonical runtime baseline. Some flags (bufferDeviceAddress,
-    // timelineSemaphore, the memory-budget extension) primarily serve the runtime
-    // memory / submit modules, but device features are creation-time-only, so they
-    // are front-loaded here to keep the device usable by those later modules.
-    DeviceConfig();
+    FeatureChain featureChain{
+        vk::PhysicalDeviceFeatures2{
+            vk::PhysicalDeviceFeatures{
+                VkPhysicalDeviceFeatures{
+                    .multiDrawIndirect = VK_TRUE,
+                    .wideLines         = VK_TRUE,
+                    .largePoints       = VK_TRUE,
+                    .samplerAnisotropy = VK_TRUE,
+                    .shaderInt64       = VK_TRUE,
+                }
+            }
+        },
+        vk::PhysicalDeviceVulkan11Features{
+            VkPhysicalDeviceVulkan11Features{
+                .sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+                .shaderDrawParameters = VK_TRUE,
+            }
+        },
+        vk::PhysicalDeviceSynchronization2Features{
+            VkPhysicalDeviceSynchronization2Features{
+                .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
+                .synchronization2 = VK_TRUE,
+            }
+        },
+        vk::PhysicalDeviceVulkan12Features{
+            VkPhysicalDeviceVulkan12Features{
+                .sType               = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+                .timelineSemaphore   = VK_TRUE,
+                .bufferDeviceAddress = VK_TRUE,
+            }
+        },
+        vk::PhysicalDeviceDynamicRenderingFeatures{
+            VkPhysicalDeviceDynamicRenderingFeatures{
+                .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+                .dynamicRendering = VK_TRUE,
+            }
+        },
+        vk::PhysicalDeviceShaderObjectFeaturesEXT{
+            VkPhysicalDeviceShaderObjectFeaturesEXT{
+                .sType        = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT,
+                .shaderObject = VK_TRUE,
+            }
+        },
+    };
 };
 
 // The logical device: the physical-device pick, the logical device, the queue

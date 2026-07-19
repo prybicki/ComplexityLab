@@ -29,7 +29,7 @@ include(cmake/Dependencies.cmake)
 # the third-party targets; add_compile_definitions() is a directory property and
 # so reaches imgui as well, which is harmless. Optimization and -g come from
 # CMake's per-config defaults.
-add_compile_options(-Wall -Wextra -Wpedantic)
+add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
 add_compile_definitions(
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     GLFW_INCLUDE_VULKAN
