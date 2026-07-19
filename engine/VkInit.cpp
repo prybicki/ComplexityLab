@@ -4,8 +4,8 @@
 // instance / device / command-pool / swapchain bring-up path.
 //==============================================================================
 
-#include "engine/VkInit.hpp"
-#include "engine/Platform.hpp"
+#include "VkInit.hpp"
+#include "Platform.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
@@ -81,7 +81,7 @@ Instance Instance::init(Proof<const GlfwInitialization>)
     const auto vkGetInstanceProcAddr = dynamicLoader_AI.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-    const auto appInfo = vk::ApplicationInfo().setApiVersion(VK_MAKE_API_VERSION(0, 1, 4, 0));
+    const auto appInfo = vk::ApplicationInfo().setApiVersion(VK_MAKE_API_VERSION(0, 1, 3, 0));
 
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);

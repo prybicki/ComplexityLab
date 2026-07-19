@@ -3,11 +3,14 @@
 #include <optional>
 
 #include "Platform.hpp"
+#include "VkInit.hpp"
 
 struct Engine
 {
 	std::unique_ptr<Fact<GlfwInitialization>> glfw;
 	std::optional<GlfwWindow>  window;
+
+	std::unique_ptr<Fact<Instance>> instance;
 
 	static Engine init(std::optional<WindowInitConfig> windowConfig) {
 		Engine engine {};
@@ -16,6 +19,7 @@ struct Engine
 		if (windowConfig.has_value()) {
 			engine.window.emplace(engine.glfw->proof(), *windowConfig);
 		}
+		engine.instance = std::make_unique<Fact<Instance>>(Instance::init(engine.glfw->proof()));
 		return engine;
 	}
 };

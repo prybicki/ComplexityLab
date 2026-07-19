@@ -60,10 +60,6 @@ struct Instance {
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
 
     static Instance init(Proof<const GlfwInitialization>);
-
-    Instance() = default;
-    Instance(Instance&&)                 = default;
-    Instance& operator=(Instance&&)      = default;
 };
 
 // ── device ──
