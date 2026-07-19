@@ -24,54 +24,37 @@
 // program; it lives with instance creation.
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-//══════════════════════ internal: helper declarations ══════════════════════
-// Forward declarations for the file-local bring-up helpers, ordered to follow
-// the header's topics (instance → device → swapchain). Definitions are at the
-// bottom of this file; the public verbs in between call through these.
-
 namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
 bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers);
+std::vector<const char*> getRequiredExtensions(bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions);
+vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo();
+void createInstanceHandle(Instance& self, const InstanceConfig& config_AI);
+void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI);
 
-std::vector<const char*> getRequiredExtensions(
-    bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions);
-
-VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-    void* pUserData);
-
-vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo();
-
-void createInstanceHandle(Instance& self, const InstanceConfig& config_AI);
-
-void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI);
+    void* pUserData
+); // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
 
 // ───────────────────────── queue families ──────────────────────────
 
 bool hasGraphics(const QueueFamilyIndices& q) noexcept;
-
 bool familiesComplete(const QueueFamilyIndices& q) noexcept;
-
 bool hasDedicatedTransfer(const QueueFamilyIndices& q) noexcept;
-
 std::set<uint32_t> uniqueFamilies(const QueueFamilyIndices& q);
-
 QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, std::optional<vk::SurfaceKHR> surface);
 
 // ───────────────────────── device build ────────────────────────────
 
 bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<const char*>& requiredExtensions);
-
 bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate);
-
 void pickPhysicalDevice(Device& self);
-
 void createLogicalDevice(Device& self);
-
 void createQueueObjects(Device& self);
 
 // ───────────────────────── swapchain build ─────────────────────────
@@ -83,37 +66,17 @@ struct SwapChainSupportDetails {
 };
 
 SwapChainSupportDetails querySwapchainSupport(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface);
-
 bool isAdequate(const SwapChainSupportDetails& d) noexcept;
-
 vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats, const SwapchainConfig& config);
-
 vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes, const SwapchainConfig& config);
-
 vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebufferExtent);
-
 uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const SwapchainConfig& config);
-
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent);
-
 void createImageViews(Swapchain& self);
 
 }  // namespace
 
 //══════════════════════════ public: bring-up ══════════════════════════
-
-DeviceConfig::DeviceConfig() {
-    requiredExtensions = {
-        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
-    };
-    vulkan11.shaderDrawParameters     = VK_TRUE;
-    vulkan12.bufferDeviceAddress      = VK_TRUE;
-    vulkan12.timelineSemaphore        = VK_TRUE;
-    sync2.synchronization2            = VK_TRUE;
-    dynamicRendering.dynamicRendering = VK_TRUE;
-}
 
 std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
     auto self = std::make_unique<Instance>();
@@ -135,6 +98,20 @@ std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
     setupDebugMessenger(*self, config);
     return self;
 }
+
+DeviceConfig::DeviceConfig() {
+    requiredExtensions = {
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
+    };
+    vulkan11.shaderDrawParameters     = VK_TRUE;
+    vulkan12.bufferDeviceAddress      = VK_TRUE;
+    vulkan12.timelineSemaphore        = VK_TRUE;
+    sync2.synchronization2            = VK_TRUE;
+    dynamicRendering.dynamicRendering = VK_TRUE;
+}
+
 
 vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, GLFWwindow* window) {
     VkSurfaceKHR rawSurface;
