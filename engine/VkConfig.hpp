@@ -7,7 +7,40 @@
 #include <vulkan/vulkan.hpp>
 
 #include <cstdint>
+#include <string>
 #include <vector>
+
+struct InstanceConfig {
+    std::string applicationName    = "ComplexityLab";
+    uint32_t applicationVersion    = VK_MAKE_VERSION(1, 0, 0);
+    std::string engineName         = "No Engine";
+    uint32_t engineVersion         = VK_MAKE_VERSION(1, 0, 0);
+    uint32_t apiVersion            = VK_API_VERSION_1_3;
+
+#ifndef NDEBUG
+    std::vector<const char*> validationLayers = {
+        "VK_LAYER_KHRONOS_validation",
+    };
+    std::vector<vk::ValidationFeatureEnableEXT> validationFeatures = {
+        vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+    };
+#else
+    std::vector<const char*> validationLayers;
+    std::vector<vk::ValidationFeatureEnableEXT> validationFeatures;
+#endif
+
+    vk::DebugUtilsMessageSeverityFlagsEXT debugSeverity =
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+
+    vk::DebugUtilsMessageTypeFlagsEXT debugTypes =
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
+
+    std::vector<const char*> requiredExtensions;
+};
 
 struct DeviceConfig {
     using FeatureChain = vk::StructureChain<
@@ -19,8 +52,6 @@ struct DeviceConfig {
         vk::PhysicalDeviceShaderObjectFeaturesEXT
     >;
 
-    // Extensions the runtime requires. Callers may append scene-specific
-    // extensions after the baseline.
     std::vector<const char*> requiredExtensions = {
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,

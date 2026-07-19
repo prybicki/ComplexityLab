@@ -29,14 +29,12 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-#ifndef NDEBUG
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData
 ); // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
-#endif
 
 // ───────────────────────── queue families ──────────────────────────
 
@@ -75,13 +73,21 @@ void createImageViews(Swapchain& self);
 
 //══════════════════════════ public: bring-up ══════════════════════════
 
-Instance Instance::init(Proof<const GlfwInitialization>)
+Instance Instance::init(Proof<const GlfwInitialization>, InstanceConfig config)
 {
     static vk::DynamicLoader dynamicLoader_AI;
     const auto vkGetInstanceProcAddr = dynamicLoader_AI.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-    const auto appInfo = vk::ApplicationInfo().setApiVersion(VK_MAKE_API_VERSION(0, 1, 3, 0));
+    Instance self;
+    self.config = std::move(config);
+
+    const auto appInfo = vk::ApplicationInfo()
+        .setPApplicationName(self.config.applicationName.c_str())
+        .setApplicationVersion(self.config.applicationVersion)
+        .setPEngineName(self.config.engineName.c_str())
+        .setEngineVersion(self.config.engineVersion)
+        .setApiVersion(self.config.apiVersion);
 
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -89,62 +95,41 @@ Instance Instance::init(Proof<const GlfwInitialization>)
         throw std::runtime_error("Failed to get GLFW Vulkan instance extensions!");
     }
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    extensions.insert(extensions.end(), self.config.requiredExtensions.begin(), self.config.requiredExtensions.end());
 
     auto createInfo = vk::InstanceCreateInfo()
-        .setPApplicationInfo(&appInfo);
-
-    Instance self;
-
-#ifndef NDEBUG
-    const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-
-    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
-    vk::ValidationFeaturesEXT validationFeatures;
-    vk::ValidationFeatureEnableEXT enabledFeatures[] = {
-        vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
-    };
-
-    createInfo
-        .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
-        .setPpEnabledExtensionNames(extensions.data())
-        .setEnabledLayerCount(static_cast<uint32_t>(validationLayers.size()))
-        .setPpEnabledLayerNames(validationLayers.data());
-
-    validationFeatures.setEnabledValidationFeatures(enabledFeatures);
-    debugCreateInfo = vk::DebugUtilsMessengerCreateInfoEXT()
-        .setMessageSeverity(
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
-        .setMessageType(
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
-        .setPfnUserCallback(debugCallback);
-    debugCreateInfo.setPNext(&validationFeatures);
-    createInfo.setPNext(&debugCreateInfo);
-    self.instance = vk::createInstanceUnique(createInfo);
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(*self.instance);
-
-    self.debugMessenger = self.instance->createDebugUtilsMessengerEXTUnique(
-        vk::DebugUtilsMessengerCreateInfoEXT()
-            .setMessageSeverity(
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
-            .setMessageType(
-                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
-            .setPfnUserCallback(debugCallback));
-#else
-    createInfo
+        .setPApplicationInfo(&appInfo)
         .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
         .setPpEnabledExtensionNames(extensions.data());
+
+    const bool validationEnabled = !self.config.validationLayers.empty();
+    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+    vk::ValidationFeaturesEXT validationFeatures;
+
+    if (validationEnabled) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        createInfo
+            .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
+            .setPpEnabledExtensionNames(extensions.data())
+            .setEnabledLayerCount(static_cast<uint32_t>(self.config.validationLayers.size()))
+            .setPpEnabledLayerNames(self.config.validationLayers.data());
+
+        validationFeatures.setEnabledValidationFeatures(self.config.validationFeatures);
+        debugCreateInfo
+            .setMessageSeverity(self.config.debugSeverity)
+            .setMessageType(self.config.debugTypes)
+            .setPfnUserCallback(debugCallback)
+            .setPNext(&validationFeatures);
+        createInfo.setPNext(&debugCreateInfo);
+    }
+
     self.instance = vk::createInstanceUnique(createInfo);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*self.instance);
-#endif
+
+    if (validationEnabled) {
+        debugCreateInfo.pNext = nullptr;
+        self.debugMessenger = self.instance->createDebugUtilsMessengerEXTUnique(debugCreateInfo);
+    }
 
     return self;
 }
@@ -220,7 +205,6 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-#ifndef NDEBUG
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -241,8 +225,6 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     }
     return VK_FALSE;
 }
-
-#endif
 
 // ───────────────────────── queue families ──────────────────────────
 

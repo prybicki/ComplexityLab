@@ -48,10 +48,11 @@ struct GlfwWindow;
 
 // The Vulkan instance and its debug messenger. Move-only; create with init.
 struct Instance {
+    InstanceConfig                    config;
     vk::UniqueInstance               instance;
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
 
-    static Instance init(Proof<const GlfwInitialization>);
+    static Instance init(Proof<const GlfwInitialization>, InstanceConfig config = {});
 };
 
 // ── device ──
