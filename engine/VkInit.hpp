@@ -27,7 +27,7 @@ struct WindowSurface {
     static WindowSurface init(Proof<const Instance> instance, Proof<const GlfwWindow> window);
 };
 
-struct Device {
+struct PhysicalDevice {
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;
         std::optional<uint32_t> presentFamily;
@@ -35,9 +35,13 @@ struct Device {
     };
 
     Proof<const Instance> instance;
-    vk::PhysicalDevice    physicalDevice;
-    vk::UniqueDevice      device;
+    vk::PhysicalDevice    handle_AI;
     QueueFamilyIndices    queueFamilies;
+};
+
+struct Device {
+    PhysicalDevice   physicalDevice;
+    vk::UniqueDevice device;
 
     vk::Queue             graphicsQueue_AI;
     vk::Queue             presentQueue_AI;

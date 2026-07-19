@@ -15,7 +15,6 @@
 #include <limits>
 #include <set>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -37,19 +36,23 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 
 // ───────────────────────── queue families ──────────────────────────
 
-bool familiesComplete(const Device::QueueFamilyIndices& q) noexcept;
-bool hasDedicatedTransfer(const Device::QueueFamilyIndices& q) noexcept;
-std::set<uint32_t> uniqueFamilies(const Device::QueueFamilyIndices& q);
-Device::QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface);
+bool familiesComplete(const PhysicalDevice::QueueFamilyIndices& q) noexcept;
+bool hasDedicatedTransfer(const PhysicalDevice::QueueFamilyIndices& q) noexcept;
+std::set<uint32_t> uniqueFamilies(const PhysicalDevice::QueueFamilyIndices& q);
+PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice device_AI,
+                                                        vk::SurfaceKHR surface_AI);
 
 // ───────────────────────── device build ────────────────────────────
 
-bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<const char*>& requiredExtensions);
-bool isDeviceSuitable(vk::PhysicalDevice candidate, vk::SurfaceKHR surface,
-                      const DeviceConfig& config);
-void pickPhysicalDevice(Device& self, vk::SurfaceKHR surface, const DeviceConfig& config);
-void createLogicalDevice(Device& self, const DeviceConfig& config);
-void createQueueObjects(Device& self);
+bool checkDeviceExtensionSupport_AI(vk::PhysicalDevice device_AI,
+                                    const std::vector<const char*>& requiredExtensions_AI);
+bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI);
+std::optional<PhysicalDevice::QueueFamilyIndices> findSuitableQueueFamilies_AI(
+    vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI, const DeviceConfig& config_AI);
+PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI,
+                                     const DeviceConfig& config_AI);
+void createLogicalDevice_AI(Device& self_AI, const DeviceConfig& config_AI);
+void createQueueObjects_AI(Device& self_AI);
 
 // ───────────────────────── swapchain build ─────────────────────────
 
@@ -149,16 +152,16 @@ std::unique_ptr<Fact<Device>> Device::init(Proof<const Instance> instance,
                                            Proof<const WindowSurface> surface,
                                            DeviceConfig config) {
     const vk::SurfaceKHR surfaceHandle = *surface->surface;
+    auto physicalDevice_AI = pickPhysicalDevice_AI(std::move(instance), surfaceHandle, config);
 
     auto self = std::make_unique<Fact<Device>>(
-        [instance = std::move(instance)]() mutable {
-            return Device{.instance = std::move(instance)};
+        [physicalDevice_AI = std::move(physicalDevice_AI)]() mutable {
+            return Device{.physicalDevice = std::move(physicalDevice_AI)};
         });
 
-    pickPhysicalDevice(**self, surfaceHandle, config);
-    createLogicalDevice(**self, config);
+    createLogicalDevice_AI(**self, config);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*(*self)->device);
-    createQueueObjects(**self);
+    createQueueObjects_AI(**self);
     return self;
 }
 
@@ -172,7 +175,7 @@ Device::~Device()
 CommandPool CommandPool::init(Proof<const Device> device) {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-    poolInfo.queueFamilyIndex = device->queueFamilies.graphicsFamily.value();
+    poolInfo.queueFamilyIndex = device->physicalDevice.queueFamilies.graphicsFamily.value();
     auto pool = device->device->createCommandPoolUnique(poolInfo);
     return CommandPool{
         std::move(device),
@@ -223,16 +226,16 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
 
 // ───────────────────────── queue families ──────────────────────────
 
-bool familiesComplete(const Device::QueueFamilyIndices& q) noexcept {
+bool familiesComplete(const PhysicalDevice::QueueFamilyIndices& q) noexcept {
     return q.graphicsFamily.has_value() && q.presentFamily.has_value() && q.transferFamily.has_value();
 }
 
-bool hasDedicatedTransfer(const Device::QueueFamilyIndices& q) noexcept {
+bool hasDedicatedTransfer(const PhysicalDevice::QueueFamilyIndices& q) noexcept {
     return q.transferFamily.has_value() && q.graphicsFamily.has_value()
         && q.transferFamily.value() != q.graphicsFamily.value();
 }
 
-std::set<uint32_t> uniqueFamilies(const Device::QueueFamilyIndices& q) {
+std::set<uint32_t> uniqueFamilies(const PhysicalDevice::QueueFamilyIndices& q) {
     std::set<uint32_t> families;
     if (q.graphicsFamily.has_value()) families.insert(q.graphicsFamily.value());
     if (q.presentFamily.has_value())  families.insert(q.presentFamily.value());
@@ -240,170 +243,218 @@ std::set<uint32_t> uniqueFamilies(const Device::QueueFamilyIndices& q) {
     return families;
 }
 
-Device::QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
-    Device::QueueFamilyIndices indices;
-    auto queueFamilies = device.getQueueFamilyProperties();
+PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice device_AI,
+                                                        vk::SurfaceKHR surface_AI) {
+    PhysicalDevice::QueueFamilyIndices indices_AI;
+    const auto queueFamilies_AI = device_AI.getQueueFamilyProperties();
+    bool unifiedGraphicsPresentFound_AI = false;
+    bool transferOnlyFound_AI = false;
 
-    uint32_t i = 0;
-    for (const auto& queueFamily : queueFamilies) {
-        if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) indices.graphicsFamily = i;
+    for (uint32_t queueFamilyIndex_AI = 0; queueFamilyIndex_AI < queueFamilies_AI.size();
+         ++queueFamilyIndex_AI) {
+        const auto& queueFamily_AI = queueFamilies_AI[queueFamilyIndex_AI];
+        const bool supportsGraphics_AI =
+            static_cast<bool>(queueFamily_AI.queueFlags & vk::QueueFlagBits::eGraphics);
+        const bool supportsCompute_AI =
+            static_cast<bool>(queueFamily_AI.queueFlags & vk::QueueFlagBits::eCompute);
+        const bool supportsTransfer_AI =
+            static_cast<bool>(queueFamily_AI.queueFlags & vk::QueueFlagBits::eTransfer);
+        const bool supportsPresent_AI = device_AI.getSurfaceSupportKHR(queueFamilyIndex_AI, surface_AI);
 
-        // Present family: PREFER the graphics family (a unified graphics+present
-        // queue lets the swapchain stay EXCLUSIVE instead of CONCURRENT), else
-        // take the first present-capable family.
-        if (device.getSurfaceSupportKHR(i, surface) &&
-            (!indices.presentFamily.has_value() ||
-             (indices.graphicsFamily.has_value() && i == indices.graphicsFamily.value()))) {
-            indices.presentFamily = i;
+        if (supportsGraphics_AI && supportsPresent_AI && !unifiedGraphicsPresentFound_AI) {
+            indices_AI.graphicsFamily = queueFamilyIndex_AI;
+            indices_AI.presentFamily = queueFamilyIndex_AI;
+            unifiedGraphicsPresentFound_AI = true;
+        } else if (!unifiedGraphicsPresentFound_AI) {
+            if (supportsGraphics_AI && !indices_AI.graphicsFamily) {
+                indices_AI.graphicsFamily = queueFamilyIndex_AI;
+            }
+            if (supportsPresent_AI && !indices_AI.presentFamily) {
+                indices_AI.presentFamily = queueFamilyIndex_AI;
+            }
         }
 
-        // Prefer a dedicated transfer queue (transfer-capable, no graphics/compute).
-        if ((queueFamily.queueFlags & vk::QueueFlagBits::eTransfer) &&
-            !(queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) &&
-            !(queueFamily.queueFlags & vk::QueueFlagBits::eCompute) &&
-            !indices.transferFamily.has_value()) {
-            indices.transferFamily = i;
+        const bool transferOnly_AI = supportsTransfer_AI && !supportsGraphics_AI && !supportsCompute_AI;
+        if (supportsTransfer_AI && !supportsGraphics_AI
+            && (!indices_AI.transferFamily || (transferOnly_AI && !transferOnlyFound_AI))) {
+            indices_AI.transferFamily = queueFamilyIndex_AI;
+            transferOnlyFound_AI = transferOnly_AI;
         }
-        i++;
     }
 
-    // Fallback: use graphics queue for transfers.
-    if (!indices.transferFamily.has_value() && indices.graphicsFamily.has_value())
-        indices.transferFamily = indices.graphicsFamily;
+    if (!indices_AI.transferFamily) {
+        indices_AI.transferFamily = indices_AI.graphicsFamily;
+    }
 
-    return indices;
+    return indices_AI;
 }
 
 // ───────────────────────── device build ────────────────────────────
 
-bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<const char*>& requiredExtensions) {
-    auto availableExtensions = device.enumerateDeviceExtensionProperties();
-    std::set<std::string> requiredExtensionsSet(requiredExtensions.begin(), requiredExtensions.end());
-    for (const auto& extension : availableExtensions) requiredExtensionsSet.erase(extension.extensionName.data());
+bool checkDeviceExtensionSupport_AI(vk::PhysicalDevice device_AI,
+                                    const std::vector<const char*>& requiredExtensions_AI) {
+    const auto availableExtensions_AI = device_AI.enumerateDeviceExtensionProperties();
+    std::set<std::string_view> missingExtensions_AI(requiredExtensions_AI.begin(),
+                                                    requiredExtensions_AI.end());
+    for (const auto& extension_AI : availableExtensions_AI) {
+        missingExtensions_AI.erase(extension_AI.extensionName.data());
+    }
 
-    if (!requiredExtensionsSet.empty()) {
+    if (!missingExtensions_AI.empty()) {
         spdlog::debug("Missing device extensions:");
-        for (const auto& ext : requiredExtensionsSet) spdlog::debug("  - {}", ext);
+        for (const auto extension_AI : missingExtensions_AI) {
+            spdlog::debug("  - {}", extension_AI);
+        }
     }
-    return requiredExtensionsSet.empty();
+    return missingExtensions_AI.empty();
 }
 
-bool isDeviceSuitable(vk::PhysicalDevice candidate, vk::SurfaceKHR surface,
-                      const DeviceConfig& config) {
-    auto indices = findQueueFamilies(candidate, surface);
-    bool extensionsSupported = checkDeviceExtensionSupport(candidate, config.requiredExtensions);
+bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI) {
+    DeviceConfig::FeatureChain supportedFeatureChain_AI;
+    candidate_AI.getFeatures2(&supportedFeatureChain_AI.get<vk::PhysicalDeviceFeatures2>());
 
-    bool swapChainAdequate = false;
-    if (extensionsSupported) {
-        auto formats = candidate.getSurfaceFormatsKHR(surface);
-        auto presentModes = candidate.getSurfacePresentModesKHR(surface);
-        swapChainAdequate = !formats.empty() && !presentModes.empty();
+    const auto& requiredFeatures_AI = config_AI.featureChain.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& supportedFeatures_AI = supportedFeatureChain_AI.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto* required_AI = reinterpret_cast<const VkBool32*>(&requiredFeatures_AI);
+    const auto* supported_AI = reinterpret_cast<const VkBool32*>(&supportedFeatures_AI);
+    constexpr size_t featureCount_AI = sizeof(vk::PhysicalDeviceFeatures) / sizeof(VkBool32);
+    for (size_t featureIndex_AI = 0; featureIndex_AI < featureCount_AI; ++featureIndex_AI) {
+        if (required_AI[featureIndex_AI] && !supported_AI[featureIndex_AI]) {
+            return false;
+        }
     }
 
-    DeviceConfig::FeatureChain supportedFeatureChain;
-    candidate.getFeatures2(&supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>());
+    const auto supportsFeature_AI = [&]<typename Feature_AI>(VkBool32 Feature_AI::* feature_AI) {
+        return !(config_AI.featureChain.get<Feature_AI>().*feature_AI)
+            || supportedFeatureChain_AI.get<Feature_AI>().*feature_AI;
+    };
 
-    const auto& requiredFeatures = config.featureChain.get<vk::PhysicalDeviceFeatures2>().features;
-    const auto& supportedFeatures = supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>().features;
-    const auto* required  = reinterpret_cast<const VkBool32*>(&requiredFeatures);
-    const auto* supported = reinterpret_cast<const VkBool32*>(&supportedFeatures);
-    constexpr size_t featureCount = sizeof(vk::PhysicalDeviceFeatures) / sizeof(VkBool32);
-    bool featuresSupported = true;
-    for (size_t i = 0; i < featureCount; ++i) {
-        if (required[i] && !supported[i]) { featuresSupported = false; break; }
-    }
-
-    featuresSupported = featuresSupported
-        && (!config.featureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
-            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters)
-        && (!config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore
-            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
-        && (!config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress
-            || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress)
-        && (!config.featureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2
-            || supportedFeatureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2)
-        && (!config.featureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering
-            || supportedFeatureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering)
-        && (!config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
-            || supportedFeatureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject);
-
-    bool queuesOk = familiesComplete(indices);
-
-    return queuesOk && extensionsSupported && swapChainAdequate && featuresSupported;
+    return supportsFeature_AI(&vk::PhysicalDeviceVulkan11Features::shaderDrawParameters)
+        && supportsFeature_AI(&vk::PhysicalDeviceVulkan12Features::timelineSemaphore)
+        && supportsFeature_AI(&vk::PhysicalDeviceVulkan12Features::bufferDeviceAddress)
+        && supportsFeature_AI(&vk::PhysicalDeviceSynchronization2Features::synchronization2)
+        && supportsFeature_AI(&vk::PhysicalDeviceDynamicRenderingFeatures::dynamicRendering)
+        && supportsFeature_AI(&vk::PhysicalDeviceShaderObjectFeaturesEXT::shaderObject);
 }
 
-void pickPhysicalDevice(Device& self, vk::SurfaceKHR surface, const DeviceConfig& config) {
-    auto devices = self.instance->instance->enumeratePhysicalDevices();
-    if (devices.empty()) throw std::runtime_error("Failed to find GPUs with Vulkan support!");
-
-    vk::PhysicalDevice selectedDevice;
-    vk::PhysicalDevice fallbackDevice;
-
-    for (const auto& candidate : devices) {
-        if (!isDeviceSuitable(candidate, surface, config)) continue;
-        auto properties = candidate.getProperties();
-        if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) { selectedDevice = candidate; break; }
-        if (!fallbackDevice) fallbackDevice = candidate;
+std::optional<PhysicalDevice::QueueFamilyIndices> findSuitableQueueFamilies_AI(
+    vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI, const DeviceConfig& config_AI) {
+    auto queueFamilies_AI = findQueueFamilies_AI(candidate_AI, surface_AI);
+    if (!familiesComplete(queueFamilies_AI)) {
+        return std::nullopt;
+    }
+    if (!checkDeviceExtensionSupport_AI(candidate_AI, config_AI.requiredExtensions)) {
+        return std::nullopt;
     }
 
-    self.physicalDevice = selectedDevice ? selectedDevice : fallbackDevice;
-    if (!self.physicalDevice) throw std::runtime_error("Failed to find a suitable GPU!");
+    const auto formats_AI = candidate_AI.getSurfaceFormatsKHR(surface_AI);
+    const auto presentModes_AI = candidate_AI.getSurfacePresentModesKHR(surface_AI);
+    if (formats_AI.empty() || presentModes_AI.empty()) {
+        return std::nullopt;
+    }
+    if (!supportsRequiredFeatures_AI(candidate_AI, config_AI)) {
+        return std::nullopt;
+    }
 
-    self.queueFamilies = findQueueFamilies(self.physicalDevice, surface);
+    return queueFamilies_AI;
+}
 
-    auto properties = self.physicalDevice.getProperties();
-    spdlog::info("Selected GPU: {} (Type: {})", properties.deviceName.data(), vk::to_string(properties.deviceType));
+PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI,
+                                     const DeviceConfig& config_AI) {
+    const auto devices_AI = instance_AI->instance->enumeratePhysicalDevices();
+    if (devices_AI.empty()) {
+        throw std::runtime_error("Failed to find GPUs with Vulkan support!");
+    }
+
+    vk::PhysicalDevice selectedDevice_AI;
+    PhysicalDevice::QueueFamilyIndices selectedQueueFamilies_AI;
+    vk::PhysicalDevice fallbackDevice_AI;
+    PhysicalDevice::QueueFamilyIndices fallbackQueueFamilies_AI;
+
+    for (const auto& candidate_AI : devices_AI) {
+        auto queueFamilies_AI = findSuitableQueueFamilies_AI(candidate_AI, surface_AI, config_AI);
+        if (!queueFamilies_AI) {
+            continue;
+        }
+
+        const auto properties_AI = candidate_AI.getProperties();
+        if (properties_AI.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+            selectedDevice_AI = candidate_AI;
+            selectedQueueFamilies_AI = std::move(*queueFamilies_AI);
+            break;
+        }
+        if (!fallbackDevice_AI) {
+            fallbackDevice_AI = candidate_AI;
+            fallbackQueueFamilies_AI = std::move(*queueFamilies_AI);
+        }
+    }
+
+    if (!selectedDevice_AI) {
+        selectedDevice_AI = fallbackDevice_AI;
+        selectedQueueFamilies_AI = std::move(fallbackQueueFamilies_AI);
+    }
+    if (!selectedDevice_AI) {
+        throw std::runtime_error("Failed to find a suitable GPU!");
+    }
+
+    const auto properties_AI = selectedDevice_AI.getProperties();
+    spdlog::info("Selected GPU: {} (Type: {})", properties_AI.deviceName.data(),
+                 vk::to_string(properties_AI.deviceType));
 
     // A CPU-type device is a software rasterizer (e.g. llvmpipe): reaching it
     // means NO hardware GPU satisfied the engine's requirements, so we fell
     // through to software rendering — orders of magnitude slower. Warn loudly.
-    if (properties.deviceType == vk::PhysicalDeviceType::eCpu) {
+    if (properties_AI.deviceType == vk::PhysicalDeviceType::eCpu) {
         spdlog::warn("Rendering on a CPU software rasterizer ({}) — no hardware GPU met the "
                      "engine's requirements, so performance will be drastically lower than on a "
                      "real GPU. This usually means the GPU driver lacks a required extension or "
                      "feature; updating the GPU driver typically fixes it.",
-                     properties.deviceName.data());
+                     properties_AI.deviceName.data());
     }
+
+    return PhysicalDevice{
+        std::move(instance_AI),
+        selectedDevice_AI,
+        std::move(selectedQueueFamilies_AI),
+    };
 }
 
-void createLogicalDevice(Device& self, const DeviceConfig& config) {
-    std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
-    auto families = uniqueFamilies(self.queueFamilies);
+void createLogicalDevice_AI(Device& self_AI, const DeviceConfig& config_AI) {
+    const auto& queueFamilies_AI = self_AI.physicalDevice.queueFamilies;
+    const auto families_AI = uniqueFamilies(queueFamilies_AI);
+    const float queuePriority_AI = 1.0f;
 
-    float queuePriority = 1.0f;
-    for (uint32_t queueFamily : families) {
-        queueCreateInfos.push_back(
-            vk::DeviceQueueCreateInfo().setQueueFamilyIndex(queueFamily).setQueueCount(1).setPQueuePriorities(&queuePriority));
+    std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos_AI;
+    queueCreateInfos_AI.reserve(families_AI.size());
+    for (const uint32_t queueFamily_AI : families_AI) {
+        queueCreateInfos_AI.push_back(vk::DeviceQueueCreateInfo()
+                                          .setQueueFamilyIndex(queueFamily_AI)
+                                          .setQueueCount(1)
+                                          .setPQueuePriorities(&queuePriority_AI));
     }
 
-    auto createInfo = vk::DeviceCreateInfo()
-        .setQueueCreateInfoCount(static_cast<uint32_t>(queueCreateInfos.size()))
-        .setPQueueCreateInfos(queueCreateInfos.data())
-        .setPEnabledFeatures(nullptr)
-        .setEnabledExtensionCount(static_cast<uint32_t>(config.requiredExtensions.size()))
-        .setPpEnabledExtensionNames(config.requiredExtensions.data())
-        .setPNext(&config.featureChain.get<vk::PhysicalDeviceFeatures2>());
+    const auto createInfo_AI = vk::DeviceCreateInfo()
+        .setQueueCreateInfos(queueCreateInfos_AI)
+        .setPEnabledExtensionNames(config_AI.requiredExtensions)
+        .setPNext(&config_AI.featureChain.get<vk::PhysicalDeviceFeatures2>());
 
-    self.device = self.physicalDevice.createDeviceUnique(createInfo);
+    self_AI.device = self_AI.physicalDevice.handle_AI.createDeviceUnique(createInfo_AI);
 
     spdlog::info("Queue families: graphics={}, present={}, transfer={} (dedicated={})",
-                 self.queueFamilies.graphicsFamily.value(),
-                 self.queueFamilies.presentFamily.value(),
-                 self.queueFamilies.transferFamily.value(),
-                 hasDedicatedTransfer(self.queueFamilies));
+                 queueFamilies_AI.graphicsFamily.value(),
+                 queueFamilies_AI.presentFamily.value(),
+                 queueFamilies_AI.transferFamily.value(),
+                 hasDedicatedTransfer(queueFamilies_AI));
 }
 
 // Obtain the raw queue handles the device just created. getQueue is idempotent;
 // the submit / timeline / command-ring machinery that OPERATES these queues is a
 // separate runtime module. present aliases graphics when they share a family.
-void createQueueObjects(Device& self) {
-    const vk::Queue graphicsHandle = self.device->getQueue(self.queueFamilies.graphicsFamily.value(), 0);
-    const vk::Queue transferHandle = self.device->getQueue(self.queueFamilies.transferFamily.value(), 0);
-    const vk::Queue presentHandle  = self.device->getQueue(self.queueFamilies.presentFamily.value(), 0);
-
-    self.graphicsQueue_AI = graphicsHandle;
-    self.transferQueue_AI = transferHandle;
-    self.presentQueue_AI  = presentHandle;
+void createQueueObjects_AI(Device& self_AI) {
+    const auto& queueFamilies_AI = self_AI.physicalDevice.queueFamilies;
+    self_AI.graphicsQueue_AI = self_AI.device->getQueue(queueFamilies_AI.graphicsFamily.value(), 0);
+    self_AI.transferQueue_AI = self_AI.device->getQueue(queueFamilies_AI.transferFamily.value(), 0);
+    self_AI.presentQueue_AI = self_AI.device->getQueue(queueFamilies_AI.presentFamily.value(), 0);
 }
 
 // ───────────────────────── swapchain build ─────────────────────────
@@ -452,7 +503,7 @@ uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const 
 }
 
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent) {
-    auto physicalDevice = self.device->physicalDevice;
+    auto physicalDevice = self.device->physicalDevice.handle_AI;
     SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, *self.surface->surface);
     if (!isAdequate(support)) throw std::runtime_error("Swapchain support is inadequate");
 
@@ -470,7 +521,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
         .setImageArrayLayers(1)
         .setImageUsage(config.imageUsage);
 
-    const auto& families = self.device->queueFamilies;
+    const auto& families = self.device->physicalDevice.queueFamilies;
     uint32_t graphicsFamily = families.graphicsFamily.value();
     uint32_t presentFamily  = families.presentFamily.value();
     uint32_t queueFamilyIndices[] = {graphicsFamily, presentFamily};
