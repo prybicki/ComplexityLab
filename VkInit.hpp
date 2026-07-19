@@ -9,9 +9,9 @@
 // records, submits, presents, or allocates GPU memory.
 //
 // -- The arc of bring-up (windowed) -------------------------------------------
-//   auto instance = makeInstance();                          // instance + debug
-//   auto surface  = createWindowSurface(*instance, window);  // GLFW → VkSurface
-//   auto device   = makeDevice(rawHandle(*instance), *surface);
+//   auto instance = Instance::init(glfw.proof());            // instance + debug
+//   auto surface  = createWindowSurface(instance, window);   // GLFW → VkSurface
+//   auto device   = makeDevice(rawHandle(instance), *surface);
 //   auto pool     = makeCommandPool(*device);
 //   auto swap     = makeSwapchain(*device, *surface, drawableExtent);
 //   // ... hand these to the render / present / memory modules ...
@@ -48,34 +48,22 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <string>
 #include <vector>
 
-struct GLFWwindow;
+template <typename T> struct Proof;
+struct GlfwInitialization;
+struct GlfwWindow;
 
-// ── instance ──
-
-struct InstanceConfig {
-    std::string              applicationName        = "ComplexityLab";
-    uint32_t                 applicationVersion     = VK_MAKE_VERSION(1, 0, 0);
-    bool                     enableValidationLayers = true;
-    bool                     headless               = false;   // no surface extensions
-    std::vector<const char*> validationLayers       = {"VK_LAYER_KHRONOS_validation"};
-    std::vector<const char*> requiredExtensions     = {};
-};    // Validation is gated on the build (ENABLE_VALIDATION_LAYERS is defined for
-
-
-// The Vulkan instance and its debug messenger. Heap-owned via makeInstance and
-// handed around by unique_ptr; copy/move deleted.
+// The Vulkan instance and its debug messenger. Move-only; create with init.
 struct Instance {
     vk::UniqueInstance               instance;
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
 
+    static Instance init(Proof<const GlfwInitialization>);
+
     Instance() = default;
-    Instance(const Instance&)            = delete;
-    Instance& operator=(const Instance&) = delete;
-    Instance(Instance&&)                 = delete;
-    Instance& operator=(Instance&&)      = delete;
+    Instance(Instance&&)                 = default;
+    Instance& operator=(Instance&&)      = default;
 };
 
 // ── device ──
@@ -187,12 +175,11 @@ struct Swapchain {
 
 // ── bring-up verbs ──
 
-[[nodiscard]] std::unique_ptr<Instance> makeInstance(InstanceConfig config = {});
-
 // The GLFW → Vulkan surface call, kept inside the module so no caller reaches for
 // glfwCreateWindowSurface directly. The returned surface must outlive the Device
 // and Swapchain built against it.
-[[nodiscard]] vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, GLFWwindow* window);
+[[nodiscard]] vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance,
+                                                       const GlfwWindow& window);
 
 // A null surface builds headless (graphics only, no present family, no swapchain);
 // a surface requires present support and auto-injects VK_KHR_swapchain.

@@ -11,8 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_TESTS "Build tests" ON)
 
 # No default: an unset or misspelled build type is no config at all, silently
-# dropping -g, -O and the ENABLE_VALIDATION_LAYERS define below. Demand an
-# explicit, exact choice rather than guessing.
+# dropping -g and -O. Demand an explicit, exact choice rather than guessing.
 set(CL_BUILD_TYPES Debug Release RelWithDebInfo)
 if(NOT CMAKE_BUILD_TYPE IN_LIST CL_BUILD_TYPES)
     list(JOIN CL_BUILD_TYPES ", " CL_BUILD_TYPES_HELP)
@@ -34,7 +33,6 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 add_compile_definitions(
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     GLFW_INCLUDE_VULKAN
-    $<$<CONFIG:Debug>:ENABLE_VALIDATION_LAYERS>
 )
 
 # GCC <= 13 miswarns (-Warray-bounds) on libstdc++'s std::copy memmove path,

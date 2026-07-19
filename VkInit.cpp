@@ -5,6 +5,7 @@
 //==============================================================================
 
 #include "engine/VkInit.hpp"
+#include "engine/Platform.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
@@ -28,16 +29,14 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers);
-std::vector<const char*> getRequiredExtensions(bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions);
-vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo();
-
+#ifndef NDEBUG
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData
 ); // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
+#endif
 
 // ───────────────────────── queue families ──────────────────────────
 
@@ -76,68 +75,77 @@ void createImageViews(Swapchain& self);
 
 //══════════════════════════ public: bring-up ══════════════════════════
 
-std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
-    auto self = std::make_unique<Instance>();
-
-    // Initialize dynamic loader for pre-instance functions.
-    static vk::DynamicLoader dl;
-    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr =
-        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+Instance Instance::init(Proof<const GlfwInitialization>)
+{
+    static vk::DynamicLoader dynamicLoader_AI;
+    const auto vkGetInstanceProcAddr = dynamicLoader_AI.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-    // Validation is gated on the build (ENABLE_VALIDATION_LAYERS is defined for
-    // Debug only — see the root CMakeLists), replacing the old repo's NDEBUG gate.
-#ifndef ENABLE_VALIDATION_LAYERS
-    config.enableValidationLayers = false;
+    const auto appInfo = vk::ApplicationInfo().setApiVersion(VK_MAKE_API_VERSION(0, 1, 4, 0));
+
+    uint32_t glfwExtensionCount = 0;
+    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    if (glfwExtensions == nullptr) {
+        throw std::runtime_error("Failed to get GLFW Vulkan instance extensions!");
+    }
+    std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+    auto createInfo = vk::InstanceCreateInfo()
+        .setPApplicationInfo(&appInfo);
+
+    Instance self;
+
+#ifndef NDEBUG
+    const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+    vk::ValidationFeaturesEXT validationFeatures;
+    vk::ValidationFeatureEnableEXT enabledFeatures[] = {
+        vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+    };
+
+    createInfo
+        .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
+        .setPpEnabledExtensionNames(extensions.data())
+        .setEnabledLayerCount(static_cast<uint32_t>(validationLayers.size()))
+        .setPpEnabledLayerNames(validationLayers.data());
+
+    validationFeatures.setEnabledValidationFeatures(enabledFeatures);
+    debugCreateInfo = vk::DebugUtilsMessengerCreateInfoEXT()
+        .setMessageSeverity(
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
+        .setMessageType(
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
+        .setPfnUserCallback(debugCallback);
+    debugCreateInfo.setPNext(&validationFeatures);
+    createInfo.setPNext(&debugCreateInfo);
+    self.instance = vk::createInstanceUnique(createInfo);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(*self.instance);
+
+    self.debugMessenger = self.instance->createDebugUtilsMessengerEXTUnique(
+        vk::DebugUtilsMessengerCreateInfoEXT()
+            .setMessageSeverity(
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
+            .setMessageType(
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
+            .setPfnUserCallback(debugCallback));
+#else
+    createInfo
+        .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
+        .setPpEnabledExtensionNames(extensions.data());
+    self.instance = vk::createInstanceUnique(createInfo);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(*self.instance);
 #endif
 
-    {
-        if (config.enableValidationLayers && !checkInstanceLayerSupport_AI(config.validationLayers)) {
-            throw std::runtime_error("Validation layers requested but not available!");
-        }
-
-        auto appInfo = vk::ApplicationInfo()
-            .setPApplicationName(config.applicationName.c_str())
-            .setApplicationVersion(config.applicationVersion)
-            .setPEngineName("No Engine")
-            .setEngineVersion(VK_MAKE_VERSION(1, 0, 0))
-            .setApiVersion(VK_API_VERSION_1_3);
-
-        auto extensions = getRequiredExtensions(config.enableValidationLayers, config.headless, config.requiredExtensions);
-
-        auto createInfo = vk::InstanceCreateInfo()
-            .setPApplicationInfo(&appInfo)
-            .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
-            .setPpEnabledExtensionNames(extensions.data());
-
-        auto debugCreateInfo = makeDebugMessengerCreateInfo();
-
-        // Synchronization validation: catches missing barriers, cross-queue sync
-        // errors, and external-sync violations. Lifetime must outlast the create
-        // call, hence stack-local in this function scope.
-        vk::ValidationFeaturesEXT      validationFeatures;
-        vk::ValidationFeatureEnableEXT enabledFeatures[] = {
-            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
-        };
-
-        if (config.enableValidationLayers) {
-            createInfo.setEnabledLayerCount(static_cast<uint32_t>(config.validationLayers.size()))
-                      .setPpEnabledLayerNames(config.validationLayers.data());
-
-            validationFeatures.setEnabledValidationFeatures(enabledFeatures);
-            debugCreateInfo.setPNext(&validationFeatures);
-            createInfo.setPNext(&debugCreateInfo);
-        }
-
-        self->instance = vk::createInstanceUnique(createInfo);
-    }
-
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(*self->instance);
-
-    if (config.enableValidationLayers) {
-        auto createInfo = makeDebugMessengerCreateInfo();
-        self->debugMessenger = self->instance->createDebugUtilsMessengerEXTUnique(createInfo);
-    }
     return self;
 }
 
@@ -155,9 +163,9 @@ DeviceConfig::DeviceConfig() {
 }
 
 
-vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, GLFWwindow* window) {
+vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, const GlfwWindow& window) {
     VkSurfaceKHR rawSurface;
-    if (glfwCreateWindowSurface(VkInstance(*instance.instance), window, nullptr, &rawSurface) != VK_SUCCESS)
+    if (glfwCreateWindowSurface(VkInstance(*instance.instance), window.windowHandle, nullptr, &rawSurface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface!");
     return vk::UniqueSurfaceKHR(vk::SurfaceKHR(rawSurface), *instance.instance);
 }
@@ -226,31 +234,7 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers) {
-    auto availableLayers = vk::enumerateInstanceLayerProperties();
-    for (const char* layerName : layers) {
-        bool layerFound = false;
-        for (const auto& layerProperties : availableLayers) {
-            if (std::strcmp(layerName, layerProperties.layerName.data()) == 0) { layerFound = true; break; }
-        }
-        if (!layerFound) { spdlog::warn("Instance layer not found: {}", layerName); return false; }
-    }
-    return true;
-}
-
-std::vector<const char*> getRequiredExtensions(
-    bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions) {
-    std::vector<const char*> extensions;
-    if (!headless) {
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        extensions.assign(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    }
-    for (const auto& ext : additionalExtensions) extensions.push_back(ext);
-    if (enableValidationLayers) extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    return extensions;
-}
-
+#ifndef NDEBUG
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -272,18 +256,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     return VK_FALSE;
 }
 
-vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() {
-    return vk::DebugUtilsMessengerCreateInfoEXT()
-        .setMessageSeverity(
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)
-        .setMessageType(
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
-        .setPfnUserCallback(debugCallback);
-}
+#endif
 
 // ───────────────────────── queue families ──────────────────────────
 
