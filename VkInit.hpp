@@ -44,7 +44,6 @@
 
 #include <vulkan/vulkan.hpp>
 
-#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -63,18 +62,14 @@ struct InstanceConfig {
     bool                     headless               = false;   // no surface extensions
     std::vector<const char*> validationLayers       = {"VK_LAYER_KHRONOS_validation"};
     std::vector<const char*> requiredExtensions     = {};
-};
+};    // Validation is gated on the build (ENABLE_VALIDATION_LAYERS is defined for
 
-// The Vulkan instance + its debug messenger, plus the validation-error counter
-// test fixtures assert against. PINNED: the debug messenger holds a pointer back
-// to errorCount (written from the driver thread), so the address must stay
-// stable — heap-owned via makeInstance, copy/move deleted.
+
+// The Vulkan instance and its debug messenger. Heap-owned via makeInstance and
+// handed around by unique_ptr; copy/move deleted.
 struct Instance {
-    InstanceConfig                      config;
     vk::UniqueInstance               instance;
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
-    // Monotonic count of Error-severity validation messages since creation.
-    std::atomic<uint64_t>               errorCount{0};
 
     Instance() = default;
     Instance(const Instance&)            = delete;

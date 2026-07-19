@@ -33,7 +33,7 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-bool checkValidationLayerSupport(const std::vector<const char*>& validationLayers);
+bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers);
 
 std::vector<const char*> getRequiredExtensions(
     bool enableValidationLayers, bool headless, const std::vector<const char*>& additionalExtensions);
@@ -44,11 +44,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData);
 
-vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo(std::atomic<uint64_t>& errorCount);
+vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo();
 
-void createInstanceHandle(Instance& self);
+void createInstanceHandle(Instance& self, const InstanceConfig& config_AI);
 
-void setupDebugMessenger(Instance& self);
+void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI);
 
 // ───────────────────────── queue families ──────────────────────────
 
@@ -117,7 +117,6 @@ DeviceConfig::DeviceConfig() {
 
 std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
     auto self = std::make_unique<Instance>();
-    self->config = std::move(config);
 
     // Initialize dynamic loader for pre-instance functions.
     static vk::DynamicLoader dl;
@@ -128,12 +127,12 @@ std::unique_ptr<Instance> makeInstance(InstanceConfig config) {
     // Validation is gated on the build (ENABLE_VALIDATION_LAYERS is defined for
     // Debug only — see the root CMakeLists), replacing the old repo's NDEBUG gate.
 #ifndef ENABLE_VALIDATION_LAYERS
-    self->config.enableValidationLayers = false;
+    config.enableValidationLayers = false;
 #endif
 
-    createInstanceHandle(*self);
+    createInstanceHandle(*self, config);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*self->instance);
-    setupDebugMessenger(*self);
+    setupDebugMessenger(*self, config);
     return self;
 }
 
@@ -208,14 +207,14 @@ namespace {
 
 // ───────────────────────── instance build ──────────────────────────
 
-bool checkValidationLayerSupport(const std::vector<const char*>& validationLayers) {
+bool checkInstanceLayerSupport_AI(const std::vector<const char*>& layers) {
     auto availableLayers = vk::enumerateInstanceLayerProperties();
-    for (const char* layerName : validationLayers) {
+    for (const char* layerName : layers) {
         bool layerFound = false;
         for (const auto& layerProperties : availableLayers) {
             if (std::strcmp(layerName, layerProperties.layerName.data()) == 0) { layerFound = true; break; }
         }
-        if (!layerFound) { spdlog::warn("Validation layer not found: {}", layerName); return false; }
+        if (!layerFound) { spdlog::warn("Instance layer not found: {}", layerName); return false; }
     }
     return true;
 }
@@ -240,15 +239,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     void* pUserData) {
 
     (void)messageType;
+    (void)pUserData;
     std::string_view message(pCallbackData->pMessage);
     if (message.find("Device Extension:") != std::string_view::npos) return VK_FALSE;
 
-    // pUserData points at the owning Instance's errorCount cell — narrowed from
-    // the whole Instance so the messenger only reaches the one shared atomic.
     if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         spdlog::error("Validation layer: {}", pCallbackData->pMessage);
-        if (auto* counter = static_cast<std::atomic<uint64_t>*>(pUserData))
-            counter->fetch_add(1, std::memory_order_relaxed);
     } else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         spdlog::warn("Validation layer: {}", pCallbackData->pMessage);
     } else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
@@ -257,7 +253,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     return VK_FALSE;
 }
 
-vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo(std::atomic<uint64_t>& errorCount) {
+vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() {
     return vk::DebugUtilsMessengerCreateInfoEXT()
         .setMessageSeverity(
             vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
@@ -267,30 +263,29 @@ vk::DebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo(std::atomic<ui
             vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance)
-        .setPfnUserCallback(debugCallback)
-        .setPUserData(&errorCount);
+        .setPfnUserCallback(debugCallback);
 }
 
-void createInstanceHandle(Instance& self) {
-    if (self.config.enableValidationLayers && !checkValidationLayerSupport(self.config.validationLayers)) {
+void createInstanceHandle(Instance& self, const InstanceConfig& config_AI) {
+    if (config_AI.enableValidationLayers && !checkInstanceLayerSupport_AI(config_AI.validationLayers)) {
         throw std::runtime_error("Validation layers requested but not available!");
     }
 
     auto appInfo = vk::ApplicationInfo()
-        .setPApplicationName(self.config.applicationName.c_str())
-        .setApplicationVersion(self.config.applicationVersion)
+        .setPApplicationName(config_AI.applicationName.c_str())
+        .setApplicationVersion(config_AI.applicationVersion)
         .setPEngineName("No Engine")
         .setEngineVersion(VK_MAKE_VERSION(1, 0, 0))
         .setApiVersion(VK_API_VERSION_1_3);
 
-    auto extensions = getRequiredExtensions(self.config.enableValidationLayers, self.config.headless, self.config.requiredExtensions);
+    auto extensions = getRequiredExtensions(config_AI.enableValidationLayers, config_AI.headless, config_AI.requiredExtensions);
 
     auto createInfo = vk::InstanceCreateInfo()
         .setPApplicationInfo(&appInfo)
         .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
         .setPpEnabledExtensionNames(extensions.data());
 
-    auto debugCreateInfo = makeDebugMessengerCreateInfo(self.errorCount);
+    auto debugCreateInfo = makeDebugMessengerCreateInfo();
 
     // Synchronization validation: catches missing barriers, cross-queue sync
     // errors, and external-sync violations. Lifetime must outlast the create
@@ -300,9 +295,9 @@ void createInstanceHandle(Instance& self) {
         vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
     };
 
-    if (self.config.enableValidationLayers) {
-        createInfo.setEnabledLayerCount(static_cast<uint32_t>(self.config.validationLayers.size()))
-                  .setPpEnabledLayerNames(self.config.validationLayers.data());
+    if (config_AI.enableValidationLayers) {
+        createInfo.setEnabledLayerCount(static_cast<uint32_t>(config_AI.validationLayers.size()))
+                  .setPpEnabledLayerNames(config_AI.validationLayers.data());
 
         validationFeatures.setEnabledValidationFeatures(enabledFeatures);
         debugCreateInfo.setPNext(&validationFeatures);
@@ -312,9 +307,9 @@ void createInstanceHandle(Instance& self) {
     self.instance = vk::createInstanceUnique(createInfo);
 }
 
-void setupDebugMessenger(Instance& self) {
-    if (!self.config.enableValidationLayers) return;
-    auto createInfo = makeDebugMessengerCreateInfo(self.errorCount);
+void setupDebugMessenger(Instance& self, const InstanceConfig& config_AI) {
+    if (!config_AI.enableValidationLayers) return;
+    auto createInfo = makeDebugMessengerCreateInfo();
     self.debugMessenger = self.instance->createDebugUtilsMessengerEXTUnique(createInfo);
 }
 
