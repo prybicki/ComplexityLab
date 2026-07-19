@@ -351,7 +351,6 @@ bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate) {
         && (!self.config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
             || supportedFeatureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject);
 
-    // Headless: only need graphics. With surface: need graphics + present.
     bool queuesOk = self.surface.has_value() ? familiesComplete(indices) : hasGraphics(indices);
 
     return queuesOk && extensionsSupported && swapChainAdequate && featuresSupported;
@@ -421,7 +420,7 @@ void createLogicalDevice(Device& self) {
 // Obtain the raw queue handles the device just created. getQueue is idempotent;
 // the submit / timeline / command-ring machinery that OPERATES these queues is a
 // separate runtime module. present aliases graphics when there is no present
-// family (headless / surfaceless build).
+// family.
 void createQueueObjects(Device& self) {
     const vk::Queue graphicsHandle = self.device->getQueue(self.queueFamilies.graphicsFamily.value(), 0);
     const vk::Queue transferHandle = self.device->getQueue(self.queueFamilies.transferFamily.value(), 0);
