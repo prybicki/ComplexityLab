@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstring>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -47,9 +46,11 @@ QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, std::optional<vk
 // ───────────────────────── device build ────────────────────────────
 
 bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<const char*>& requiredExtensions);
-bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate);
-void pickPhysicalDevice(Device& self);
-void createLogicalDevice(Device& self);
+bool isDeviceSuitable(vk::PhysicalDevice candidate, std::optional<vk::SurfaceKHR> surface,
+                      const DeviceConfig& config);
+void pickPhysicalDevice(Device& self, std::optional<vk::SurfaceKHR> surface,
+                        const DeviceConfig& config);
+void createLogicalDevice(Device& self, const DeviceConfig& config);
 void createQueueObjects(Device& self);
 
 // ───────────────────────── swapchain build ─────────────────────────
@@ -134,32 +135,36 @@ Instance Instance::init(Proof<const GlfwInitialization>, InstanceConfig config)
     return self;
 }
 
-vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance, const GlfwWindow& window) {
+WindowSurface createWindowSurface(Proof<const Instance> instance, Proof<const GlfwWindow> window) {
     VkSurfaceKHR rawSurface;
-    if (glfwCreateWindowSurface(VkInstance(*instance.instance), window.windowHandle, nullptr, &rawSurface) != VK_SUCCESS)
+    if (glfwCreateWindowSurface(VkInstance(*instance->instance), window->windowHandle, nullptr, &rawSurface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface!");
-    return vk::UniqueSurfaceKHR(vk::SurfaceKHR(rawSurface), *instance.instance);
+    auto surface = vk::UniqueSurfaceKHR(vk::SurfaceKHR(rawSurface), *instance->instance);
+    return WindowSurface{
+        std::move(instance),
+        std::move(window),
+        std::move(surface),
+    };
 }
 
-std::unique_ptr<Device> makeDevice(vk::Instance instance, std::optional<vk::SurfaceKHR> surface, DeviceConfig config) {
-    auto self = std::make_unique<Device>();
-    self->config   = std::move(config);
-    self->instance = instance;
-    self->surface  = surface;
+Device::Device(Proof<const Instance> instance)
+    : instance(std::move(instance)) {}
 
-    if (surface.has_value()) {
-        // Inject swapchain extension if not already present.
-        auto& exts = self->config.requiredExtensions;
-        bool hasSwapchain = std::any_of(exts.begin(), exts.end(), [](const char* e) {
-            return std::strcmp(e, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+std::unique_ptr<Fact<Device>> makeDevice(Proof<const Instance> instance,
+                                         std::optional<Proof<const WindowSurface>> surface,
+                                         DeviceConfig config) {
+    std::optional<vk::SurfaceKHR> surfaceHandle;
+    if (surface.has_value()) surfaceHandle = rawHandle(**surface);
+
+    auto self = std::make_unique<Fact<Device>>(
+        [instance = std::move(instance)]() mutable {
+            return Device(std::move(instance));
         });
-        if (!hasSwapchain) exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-    }
 
-    pickPhysicalDevice(*self);
-    createLogicalDevice(*self);
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(*self->device);
-    createQueueObjects(*self);
+    pickPhysicalDevice(**self, surfaceHandle, config);
+    createLogicalDevice(**self, config);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(*(*self)->device);
+    createQueueObjects(**self);
     return self;
 }
 
@@ -171,24 +176,24 @@ Device::~Device() {
     if (device) device->waitIdle();
 }
 
-std::unique_ptr<CommandPool> makeCommandPool(const Device& device) {
-    auto self = std::make_unique<CommandPool>();
-    self->device = rawHandle(device);
-
+std::unique_ptr<CommandPool> makeCommandPool(Proof<const Device> device) {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-    poolInfo.queueFamilyIndex = device.queueFamilies.graphicsFamily.value();
-    self->pool = self->device.createCommandPoolUnique(poolInfo);
-    return self;
+    poolInfo.queueFamilyIndex = device->queueFamilies.graphicsFamily.value();
+    auto pool = rawHandle(*device).createCommandPoolUnique(poolInfo);
+    return std::make_unique<CommandPool>(
+        std::move(device),
+        std::move(pool));
 }
 
-std::unique_ptr<Swapchain> makeSwapchain(Device& device, vk::SurfaceKHR surface,
+std::unique_ptr<Swapchain> makeSwapchain(Proof<const Device> device,
+                                         Proof<const WindowSurface> surface,
                                          vk::Extent2D framebufferExtent, const SwapchainConfig& config) {
     assert(framebufferExtent.width > 0 && framebufferExtent.height > 0 &&
            "makeSwapchain: framebuffer extent must be non-zero");
-    auto self = std::make_unique<Swapchain>();
-    self->device  = &device;
-    self->surface = surface;
+    auto self = std::make_unique<Swapchain>(
+        std::move(device),
+        std::move(surface));
 
     createSwapchainHandle(*self, config, framebufferExtent);
     createImageViews(*self);
@@ -197,6 +202,7 @@ std::unique_ptr<Swapchain> makeSwapchain(Device& device, vk::SurfaceKHR surface,
 }
 
 vk::Instance rawHandle(const Instance& instance) { return *instance.instance; }
+vk::SurfaceKHR rawHandle(const WindowSurface& surface) { return *surface.surface; }
 vk::Device   rawHandle(const Device& device)     { return *device.device; }
 
 //══════════════════════ internal: helper definitions ══════════════════════
@@ -295,21 +301,22 @@ bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<co
     return requiredExtensionsSet.empty();
 }
 
-bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate) {
-    auto indices = findQueueFamilies(candidate, self.surface);
-    bool extensionsSupported = checkDeviceExtensionSupport(candidate, self.config.requiredExtensions);
+bool isDeviceSuitable(vk::PhysicalDevice candidate, std::optional<vk::SurfaceKHR> surface,
+                      const DeviceConfig& config) {
+    auto indices = findQueueFamilies(candidate, surface);
+    bool extensionsSupported = checkDeviceExtensionSupport(candidate, config.requiredExtensions);
 
     bool swapChainAdequate = true;
-    if (self.surface.has_value() && extensionsSupported) {
-        auto formats = candidate.getSurfaceFormatsKHR(*self.surface);
-        auto presentModes = candidate.getSurfacePresentModesKHR(*self.surface);
+    if (surface.has_value() && extensionsSupported) {
+        auto formats = candidate.getSurfaceFormatsKHR(*surface);
+        auto presentModes = candidate.getSurfacePresentModesKHR(*surface);
         swapChainAdequate = !formats.empty() && !presentModes.empty();
     }
 
     DeviceConfig::FeatureChain supportedFeatureChain;
     candidate.getFeatures2(&supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>());
 
-    const auto& requiredFeatures = self.config.featureChain.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& requiredFeatures = config.featureChain.get<vk::PhysicalDeviceFeatures2>().features;
     const auto& supportedFeatures = supportedFeatureChain.get<vk::PhysicalDeviceFeatures2>().features;
     const auto* required  = reinterpret_cast<const VkBool32*>(&requiredFeatures);
     const auto* supported = reinterpret_cast<const VkBool32*>(&supportedFeatures);
@@ -320,33 +327,34 @@ bool isDeviceSuitable(const Device& self, vk::PhysicalDevice candidate) {
     }
 
     featuresSupported = featuresSupported
-        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+        && (!config.featureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
             || supportedFeatureChain.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters)
-        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore
+        && (!config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore
             || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore)
-        && (!self.config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress
+        && (!config.featureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress
             || supportedFeatureChain.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress)
-        && (!self.config.featureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2
+        && (!config.featureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2
             || supportedFeatureChain.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2)
-        && (!self.config.featureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering
+        && (!config.featureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering
             || supportedFeatureChain.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering)
-        && (!self.config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
+        && (!config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
             || supportedFeatureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject);
 
-    bool queuesOk = self.surface.has_value() ? familiesComplete(indices) : hasGraphics(indices);
+    bool queuesOk = surface.has_value() ? familiesComplete(indices) : hasGraphics(indices);
 
     return queuesOk && extensionsSupported && swapChainAdequate && featuresSupported;
 }
 
-void pickPhysicalDevice(Device& self) {
-    auto devices = self.instance.enumeratePhysicalDevices();
+void pickPhysicalDevice(Device& self, std::optional<vk::SurfaceKHR> surface,
+                        const DeviceConfig& config) {
+    auto devices = rawHandle(*self.instance).enumeratePhysicalDevices();
     if (devices.empty()) throw std::runtime_error("Failed to find GPUs with Vulkan support!");
 
     vk::PhysicalDevice selectedDevice;
     vk::PhysicalDevice fallbackDevice;
 
     for (const auto& candidate : devices) {
-        if (!isDeviceSuitable(self, candidate)) continue;
+        if (!isDeviceSuitable(candidate, surface, config)) continue;
         auto properties = candidate.getProperties();
         if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) { selectedDevice = candidate; break; }
         if (!fallbackDevice) fallbackDevice = candidate;
@@ -355,7 +363,7 @@ void pickPhysicalDevice(Device& self) {
     self.physicalDevice = selectedDevice ? selectedDevice : fallbackDevice;
     if (!self.physicalDevice) throw std::runtime_error("Failed to find a suitable GPU!");
 
-    self.queueFamilies = findQueueFamilies(self.physicalDevice, self.surface);
+    self.queueFamilies = findQueueFamilies(self.physicalDevice, surface);
 
     auto properties = self.physicalDevice.getProperties();
     spdlog::info("Selected GPU: {} (Type: {})", properties.deviceName.data(), vk::to_string(properties.deviceType));
@@ -372,7 +380,7 @@ void pickPhysicalDevice(Device& self) {
     }
 }
 
-void createLogicalDevice(Device& self) {
+void createLogicalDevice(Device& self, const DeviceConfig& config) {
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
     auto families = uniqueFamilies(self.queueFamilies);
 
@@ -386,9 +394,9 @@ void createLogicalDevice(Device& self) {
         .setQueueCreateInfoCount(static_cast<uint32_t>(queueCreateInfos.size()))
         .setPQueueCreateInfos(queueCreateInfos.data())
         .setPEnabledFeatures(nullptr)
-        .setEnabledExtensionCount(static_cast<uint32_t>(self.config.requiredExtensions.size()))
-        .setPpEnabledExtensionNames(self.config.requiredExtensions.data())
-        .setPNext(&self.config.featureChain.get<vk::PhysicalDeviceFeatures2>());
+        .setEnabledExtensionCount(static_cast<uint32_t>(config.requiredExtensions.size()))
+        .setPpEnabledExtensionNames(config.requiredExtensions.data())
+        .setPNext(&config.featureChain.get<vk::PhysicalDeviceFeatures2>());
 
     self.device = self.physicalDevice.createDeviceUnique(createInfo);
 
@@ -462,7 +470,7 @@ uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const 
 
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent) {
     auto physicalDevice = self.device->physicalDevice;
-    SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, self.surface);
+    SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, rawHandle(*self.surface));
     if (!isAdequate(support)) throw std::runtime_error("Swapchain support is inadequate");
 
     auto surfaceFormat = chooseSwapSurfaceFormat(support.formats, config);
@@ -471,7 +479,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
     uint32_t imageCount = chooseImageCount(support.capabilities, config);
 
     auto createInfo = vk::SwapchainCreateInfoKHR()
-        .setSurface(self.surface)
+        .setSurface(rawHandle(*self.surface))
         .setMinImageCount(imageCount)
         .setImageFormat(surfaceFormat.format)
         .setImageColorSpace(surfaceFormat.colorSpace)

@@ -9,20 +9,21 @@
 // records, submits, presents, or allocates GPU memory.
 //
 // -- The arc of bring-up (windowed) -------------------------------------------
-//   auto instance = Instance::init(glfw.proof());            // instance + debug
-//   auto surface  = createWindowSurface(instance, window);   // GLFW → VkSurface
-//   auto device   = makeDevice(rawHandle(instance), *surface);
-//   auto pool     = makeCommandPool(*device);
-//   auto swap     = makeSwapchain(*device, *surface, drawableExtent);
+//   Fact<Instance> instance{[&] { return Instance::init(glfw.proof()); }};
+//   Fact<WindowSurface> surface{[&] {
+//       return createWindowSurface(instance.proof(), window.proof());
+//   }};
+//   auto device = makeDevice(instance.proof(), surface.proof());
+//   auto pool   = makeCommandPool(device->proof());
+//   auto swap   = makeSwapchain(device->proof(), surface.proof(), drawableExtent);
 //   // ... hand these to the render / present / memory modules ...
 //
 // -- Ownership & teardown -----------------------------------------------------
-//   Each make* verb returns a move-only owner (unique_ptr / UniqueHandle). The
-//   pieces borrow downward — Device borrows the instance handle, Swapchain and
-//   CommandPool borrow the Device — so the COMPOSER (Engine) must declare them
-//   in bring-up order (instance, surface, device, pool, swapchain) and let
-//   reverse-order destruction unwind them. Bright data is read directly
-//   (device->queueFamilies, swap->images); there are no getters.
+//   Fact/Proof bindings encode dependencies between the instance, surface,
+//   device, command pool and swapchain. The COMPOSER (Engine) still declares
+//   them in bring-up order so reverse-order destruction unwinds naturally.
+//   Bright data is read directly ((*device)->queueFamilies, swap->images);
+//   there are no getters.
 //   ~Device drains the GPU (vkDeviceWaitIdle) before vkDestroyDevice, the one
 //   teardown step declaration order cannot express.
 //
@@ -36,13 +37,13 @@
 //==============================================================================
 
 #include "VkConfig.hpp"
+#include "Fact.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
 
-template <typename T> struct Proof;
 struct GlfwInitialization;
 struct GlfwWindow;
 
@@ -53,6 +54,12 @@ struct Instance {
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
 
     static Instance init(Proof<const GlfwInitialization>, InstanceConfig config = {});
+};
+
+struct WindowSurface {
+    Proof<const Instance>   instance;
+    Proof<const GlfwWindow> window;
+    vk::UniqueSurfaceKHR    surface;
 };
 
 // ── device ──
@@ -71,9 +78,7 @@ struct QueueFamilyIndices {
 // machinery that OPERATES them lives in a separate runtime module. presentQueue
 // aliases graphicsQueue when there is no dedicated present family.
 struct Device {
-    DeviceConfig                     config;
-    vk::Instance                  instance;       // borrowed
-    std::optional<vk::SurfaceKHR> surface;        // borrowed
+    Proof<const Instance>         instance;
     vk::PhysicalDevice            physicalDevice;
     vk::UniqueDevice              device;
     QueueFamilyIndices               queueFamilies;
@@ -82,7 +87,7 @@ struct Device {
     vk::Queue                     presentQueue_AI;
     vk::Queue                     transferQueue_AI;
 
-    Device() = default;
+    explicit Device(Proof<const Instance> instance);
     ~Device();                                       // drains the GPU before vkDestroyDevice
     Device(const Device&)            = delete;
     Device& operator=(const Device&) = delete;
@@ -93,7 +98,7 @@ struct Device {
 // ── command pool ──
 
 struct CommandPool {
-    vk::Device            device;   // borrowed handle; the owning Device outlives this
+    Proof<const Device>   device;
     vk::UniqueCommandPool pool;
 };
 
@@ -103,8 +108,8 @@ struct CommandPool {
 // images (owned by the swapchain) and matching views. The present path
 // (acquire / present / recreate + render-finished semaphores) is NOT here.
 struct Swapchain {
-    Device*                             device;   // non-owning, must outlive this
-    vk::SurfaceKHR                   surface;
+    Proof<const Device>             device;
+    Proof<const WindowSurface>      surface;
     vk::UniqueSwapchainKHR           swapchain;
     std::vector<vk::Image>           images;      // NOT owned (the swapchain owns them)
     std::vector<vk::UniqueImageView> imageViews;  // owned
@@ -115,24 +120,27 @@ struct Swapchain {
 // ── bring-up verbs ──
 
 // The GLFW → Vulkan surface call, kept inside the module so no caller reaches for
-// glfwCreateWindowSurface directly. The returned surface must outlive the Device
-// and Swapchain built against it.
-[[nodiscard]] vk::UniqueSurfaceKHR createWindowSurface(const Instance& instance,
-                                                       const GlfwWindow& window);
+// glfwCreateWindowSurface directly. The returned wrapper retains its instance
+// and window dependencies.
+[[nodiscard]] WindowSurface createWindowSurface(Proof<const Instance> instance,
+                                                Proof<const GlfwWindow> window);
 
-// A surface requires present support and auto-injects VK_KHR_swapchain.
-[[nodiscard]] std::unique_ptr<Device> makeDevice(vk::Instance instance,
-                                                 std::optional<vk::SurfaceKHR> surface,
-                                                 DeviceConfig config = {});
+// An absent surface selects a graphics-capable device for offscreen rendering.
+[[nodiscard]] std::unique_ptr<Fact<Device>> makeDevice(
+    Proof<const Instance> instance,
+    std::optional<Proof<const WindowSurface>> surface = std::nullopt,
+    DeviceConfig config = {});
 
-[[nodiscard]] std::unique_ptr<CommandPool> makeCommandPool(const Device& device);
+[[nodiscard]] std::unique_ptr<CommandPool> makeCommandPool(Proof<const Device> device);
 
 // framebufferExtent is the desired drawable size in pixels (asserted non-zero).
-[[nodiscard]] std::unique_ptr<Swapchain> makeSwapchain(Device& device, vk::SurfaceKHR surface,
+[[nodiscard]] std::unique_ptr<Swapchain> makeSwapchain(Proof<const Device> device,
+                                                       Proof<const WindowSurface> surface,
                                                        vk::Extent2D framebufferExtent,
                                                        const SwapchainConfig& config = {});
 
 // Raw handles for vulkan-hpp interop / third-party backends. The owning
 // UniqueInstance / UniqueDevice stay sealed; callers get the value.
 [[nodiscard]] vk::Instance rawHandle(const Instance& instance);
+[[nodiscard]] vk::SurfaceKHR rawHandle(const WindowSurface& surface);
 [[nodiscard]] vk::Device   rawHandle(const Device& device);
