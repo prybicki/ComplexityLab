@@ -37,19 +37,17 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 
 // ───────────────────────── queue families ──────────────────────────
 
-bool hasGraphics(const QueueFamilyIndices& q) noexcept;
-bool familiesComplete(const QueueFamilyIndices& q) noexcept;
-bool hasDedicatedTransfer(const QueueFamilyIndices& q) noexcept;
-std::set<uint32_t> uniqueFamilies(const QueueFamilyIndices& q);
-QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, std::optional<vk::SurfaceKHR> surface);
+bool familiesComplete(const Device::QueueFamilyIndices& q) noexcept;
+bool hasDedicatedTransfer(const Device::QueueFamilyIndices& q) noexcept;
+std::set<uint32_t> uniqueFamilies(const Device::QueueFamilyIndices& q);
+Device::QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface);
 
 // ───────────────────────── device build ────────────────────────────
 
 bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<const char*>& requiredExtensions);
-bool isDeviceSuitable(vk::PhysicalDevice candidate, std::optional<vk::SurfaceKHR> surface,
+bool isDeviceSuitable(vk::PhysicalDevice candidate, vk::SurfaceKHR surface,
                       const DeviceConfig& config);
-void pickPhysicalDevice(Device& self, std::optional<vk::SurfaceKHR> surface,
-                        const DeviceConfig& config);
+void pickPhysicalDevice(Device& self, vk::SurfaceKHR surface, const DeviceConfig& config);
 void createLogicalDevice(Device& self, const DeviceConfig& config);
 void createQueueObjects(Device& self);
 
@@ -151,10 +149,9 @@ Device::Device(Proof<const Instance> instance)
     : instance(std::move(instance)) {}
 
 std::unique_ptr<Fact<Device>> makeDevice(Proof<const Instance> instance,
-                                         std::optional<Proof<const WindowSurface>> surface,
+                                         Proof<const WindowSurface> surface,
                                          DeviceConfig config) {
-    std::optional<vk::SurfaceKHR> surfaceHandle;
-    if (surface.has_value()) surfaceHandle = rawHandle(**surface);
+    const vk::SurfaceKHR surfaceHandle = rawHandle(*surface);
 
     auto self = std::make_unique<Fact<Device>>(
         [instance = std::move(instance)]() mutable {
@@ -234,18 +231,16 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
 
 // ───────────────────────── queue families ──────────────────────────
 
-bool hasGraphics(const QueueFamilyIndices& q) noexcept { return q.graphicsFamily.has_value(); }
-
-bool familiesComplete(const QueueFamilyIndices& q) noexcept {
+bool familiesComplete(const Device::QueueFamilyIndices& q) noexcept {
     return q.graphicsFamily.has_value() && q.presentFamily.has_value() && q.transferFamily.has_value();
 }
 
-bool hasDedicatedTransfer(const QueueFamilyIndices& q) noexcept {
+bool hasDedicatedTransfer(const Device::QueueFamilyIndices& q) noexcept {
     return q.transferFamily.has_value() && q.graphicsFamily.has_value()
         && q.transferFamily.value() != q.graphicsFamily.value();
 }
 
-std::set<uint32_t> uniqueFamilies(const QueueFamilyIndices& q) {
+std::set<uint32_t> uniqueFamilies(const Device::QueueFamilyIndices& q) {
     std::set<uint32_t> families;
     if (q.graphicsFamily.has_value()) families.insert(q.graphicsFamily.value());
     if (q.presentFamily.has_value())  families.insert(q.presentFamily.value());
@@ -253,8 +248,8 @@ std::set<uint32_t> uniqueFamilies(const QueueFamilyIndices& q) {
     return families;
 }
 
-QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, std::optional<vk::SurfaceKHR> surface) {
-    QueueFamilyIndices indices;
+Device::QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
+    Device::QueueFamilyIndices indices;
     auto queueFamilies = device.getQueueFamilyProperties();
 
     uint32_t i = 0;
@@ -264,7 +259,7 @@ QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, std::optional<vk
         // Present family: PREFER the graphics family (a unified graphics+present
         // queue lets the swapchain stay EXCLUSIVE instead of CONCURRENT), else
         // take the first present-capable family.
-        if (surface.has_value() && device.getSurfaceSupportKHR(i, *surface) &&
+        if (device.getSurfaceSupportKHR(i, surface) &&
             (!indices.presentFamily.has_value() ||
              (indices.graphicsFamily.has_value() && i == indices.graphicsFamily.value()))) {
             indices.presentFamily = i;
@@ -301,15 +296,15 @@ bool checkDeviceExtensionSupport(vk::PhysicalDevice device, const std::vector<co
     return requiredExtensionsSet.empty();
 }
 
-bool isDeviceSuitable(vk::PhysicalDevice candidate, std::optional<vk::SurfaceKHR> surface,
+bool isDeviceSuitable(vk::PhysicalDevice candidate, vk::SurfaceKHR surface,
                       const DeviceConfig& config) {
     auto indices = findQueueFamilies(candidate, surface);
     bool extensionsSupported = checkDeviceExtensionSupport(candidate, config.requiredExtensions);
 
-    bool swapChainAdequate = true;
-    if (surface.has_value() && extensionsSupported) {
-        auto formats = candidate.getSurfaceFormatsKHR(*surface);
-        auto presentModes = candidate.getSurfacePresentModesKHR(*surface);
+    bool swapChainAdequate = false;
+    if (extensionsSupported) {
+        auto formats = candidate.getSurfaceFormatsKHR(surface);
+        auto presentModes = candidate.getSurfacePresentModesKHR(surface);
         swapChainAdequate = !formats.empty() && !presentModes.empty();
     }
 
@@ -340,13 +335,12 @@ bool isDeviceSuitable(vk::PhysicalDevice candidate, std::optional<vk::SurfaceKHR
         && (!config.featureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject
             || supportedFeatureChain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject);
 
-    bool queuesOk = surface.has_value() ? familiesComplete(indices) : hasGraphics(indices);
+    bool queuesOk = familiesComplete(indices);
 
     return queuesOk && extensionsSupported && swapChainAdequate && featuresSupported;
 }
 
-void pickPhysicalDevice(Device& self, std::optional<vk::SurfaceKHR> surface,
-                        const DeviceConfig& config) {
+void pickPhysicalDevice(Device& self, vk::SurfaceKHR surface, const DeviceConfig& config) {
     auto devices = rawHandle(*self.instance).enumeratePhysicalDevices();
     if (devices.empty()) throw std::runtime_error("Failed to find GPUs with Vulkan support!");
 
@@ -402,21 +396,18 @@ void createLogicalDevice(Device& self, const DeviceConfig& config) {
 
     spdlog::info("Queue families: graphics={}, present={}, transfer={} (dedicated={})",
                  self.queueFamilies.graphicsFamily.value(),
-                 self.queueFamilies.presentFamily.has_value() ? static_cast<int>(self.queueFamilies.presentFamily.value()) : -1,
+                 self.queueFamilies.presentFamily.value(),
                  self.queueFamilies.transferFamily.value(),
                  hasDedicatedTransfer(self.queueFamilies));
 }
 
 // Obtain the raw queue handles the device just created. getQueue is idempotent;
 // the submit / timeline / command-ring machinery that OPERATES these queues is a
-// separate runtime module. present aliases graphics when there is no present
-// family.
+// separate runtime module. present aliases graphics when they share a family.
 void createQueueObjects(Device& self) {
     const vk::Queue graphicsHandle = self.device->getQueue(self.queueFamilies.graphicsFamily.value(), 0);
     const vk::Queue transferHandle = self.device->getQueue(self.queueFamilies.transferFamily.value(), 0);
-    const vk::Queue presentHandle  = self.queueFamilies.presentFamily.has_value()
-        ? self.device->getQueue(self.queueFamilies.presentFamily.value(), 0)
-        : graphicsHandle;
+    const vk::Queue presentHandle  = self.device->getQueue(self.queueFamilies.presentFamily.value(), 0);
 
     self.graphicsQueue_AI = graphicsHandle;
     self.transferQueue_AI = transferHandle;

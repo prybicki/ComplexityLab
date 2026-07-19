@@ -64,12 +64,6 @@ struct WindowSurface {
 
 // ── device ──
 
-struct QueueFamilyIndices {
-    std::optional<uint32_t> graphicsFamily;
-    std::optional<uint32_t> presentFamily;
-    std::optional<uint32_t> transferFamily;  // dedicated transfer queue, or == graphicsFamily
-};
-
 // The logical device: the physical-device pick, the logical device, the queue
 // family indices, and the raw queue handles obtained at creation. PINNED +
 // non-movable: Swapchain / CommandPool borrow a stable Device address.
@@ -78,6 +72,12 @@ struct QueueFamilyIndices {
 // machinery that OPERATES them lives in a separate runtime module. presentQueue
 // aliases graphicsQueue when there is no dedicated present family.
 struct Device {
+    struct QueueFamilyIndices {
+        std::optional<uint32_t> graphicsFamily;
+        std::optional<uint32_t> presentFamily;
+        std::optional<uint32_t> transferFamily;  // dedicated transfer queue, or == graphicsFamily
+    };
+
     Proof<const Instance>         instance;
     vk::PhysicalDevice            physicalDevice;
     vk::UniqueDevice              device;
@@ -125,10 +125,9 @@ struct Swapchain {
 [[nodiscard]] WindowSurface createWindowSurface(Proof<const Instance> instance,
                                                 Proof<const GlfwWindow> window);
 
-// An absent surface selects a graphics-capable device for offscreen rendering.
 [[nodiscard]] std::unique_ptr<Fact<Device>> makeDevice(
     Proof<const Instance> instance,
-    std::optional<Proof<const WindowSurface>> surface = std::nullopt,
+    Proof<const WindowSurface> surface,
     DeviceConfig config = {});
 
 [[nodiscard]] std::unique_ptr<CommandPool> makeCommandPool(Proof<const Device> device);
