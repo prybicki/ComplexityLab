@@ -7,12 +7,14 @@ variables, parameters, types, members, enums and enumerators, macros,
 namespaces, template parameters, constants. If an AI rewrites an existing
 function's body, that function counts as AI-added and is renamed with `_AI`.
 
-Exception: when a name is fixed by an external contract and cannot change —
-an override, interface method, operator, a constructor/destructor of a
-pre-existing type, or a framework-required entry point/callback — do NOT
-suffix it. Mark it with a trailing `// _AI` comment instead.
+Exceptions: 
+- When user explicitly provides identifier (e.g. "rename to WindowInitConfig")
+- When a name is fixed by an external contract and cannot change:
+  an override, interface method, operator, a constructor/destructor of a
+  pre-existing type, or a framework-required entry point/callback — do NOT
+  suffix it. Mark it with a trailing `// _AI` comment instead.
 
-AI assistants MUST NOT remove an existing `_AI` suffix.
+AI assistants MUST NOT remove any existing `_AI` suffixes.
 
 Example:
 ```cpp
@@ -35,6 +37,9 @@ struct Handler_AI : Base {
 
 ## Git usage
 
-AI assistants should add their changes to git stage, and only theirs.
+AI assistants should add their changes to git stage, and only their changes.
 AI assistants MUST NOT create commits.
- 
+
+## Comments in code
+
+AI assitants MUST NOT write any comments that were not requested/suggested by user.
