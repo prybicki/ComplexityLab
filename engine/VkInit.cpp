@@ -133,7 +133,7 @@ Instance Instance::init(Proof<const GlfwInitialization>, InstanceConfig config)
     return self;
 }
 
-WindowSurface createWindowSurface(Proof<const Instance> instance, Proof<const GlfwWindow> window) {
+WindowSurface WindowSurface::init(Proof<const Instance> instance, Proof<const GlfwWindow> window) {
     VkSurfaceKHR rawSurface;
     if (glfwCreateWindowSurface(VkInstance(*instance->instance), window->windowHandle, nullptr, &rawSurface) != VK_SUCCESS)
         throw std::runtime_error("Failed to create window surface!");
@@ -145,17 +145,14 @@ WindowSurface createWindowSurface(Proof<const Instance> instance, Proof<const Gl
     };
 }
 
-Device::Device(Proof<const Instance> instance)
-    : instance(std::move(instance)) {}
-
-std::unique_ptr<Fact<Device>> makeDevice(Proof<const Instance> instance,
-                                         Proof<const WindowSurface> surface,
-                                         DeviceConfig config) {
-    const vk::SurfaceKHR surfaceHandle = rawHandle(*surface);
+std::unique_ptr<Fact<Device>> Device::init(Proof<const Instance> instance,
+                                           Proof<const WindowSurface> surface,
+                                           DeviceConfig config) {
+    const vk::SurfaceKHR surfaceHandle = *surface->surface;
 
     auto self = std::make_unique<Fact<Device>>(
         [instance = std::move(instance)]() mutable {
-            return Device(std::move(instance));
+            return Device{.instance = std::move(instance)};
         });
 
     pickPhysicalDevice(**self, surfaceHandle, config);
@@ -173,28 +170,28 @@ Device::~Device() {
     if (device) device->waitIdle();
 }
 
-std::unique_ptr<CommandPool> makeCommandPool(Proof<const Device> device) {
+CommandPool CommandPool::init(Proof<const Device> device) {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
     poolInfo.queueFamilyIndex = device->queueFamilies.graphicsFamily.value();
-    auto pool = rawHandle(*device).createCommandPoolUnique(poolInfo);
-    return std::make_unique<CommandPool>(
+    auto pool = device->device->createCommandPoolUnique(poolInfo);
+    return CommandPool{
         std::move(device),
-        std::move(pool));
+        std::move(pool)};
 }
 
-std::unique_ptr<Swapchain> makeSwapchain(Proof<const Device> device,
-                                         Proof<const WindowSurface> surface,
-                                         vk::Extent2D framebufferExtent, const SwapchainConfig& config) {
+Swapchain Swapchain::init(Proof<const Device> device,
+                          Proof<const WindowSurface> surface,
+                          vk::Extent2D framebufferExtent, const SwapchainConfig& config) {
     assert(framebufferExtent.width > 0 && framebufferExtent.height > 0 &&
-           "makeSwapchain: framebuffer extent must be non-zero");
-    auto self = std::make_unique<Swapchain>(
+           "Swapchain::init: framebuffer extent must be non-zero");
+    Swapchain self{
         std::move(device),
-        std::move(surface));
+        std::move(surface)};
 
-    createSwapchainHandle(*self, config, framebufferExtent);
-    createImageViews(*self);
-    spdlog::info("Swapchain: {}x{}, {} images", self->extent.width, self->extent.height, self->images.size());
+    createSwapchainHandle(self, config, framebufferExtent);
+    createImageViews(self);
+    spdlog::info("Swapchain: {}x{}, {} images", self.extent.width, self.extent.height, self.images.size());
     return self;
 }
 
@@ -341,7 +338,7 @@ bool isDeviceSuitable(vk::PhysicalDevice candidate, vk::SurfaceKHR surface,
 }
 
 void pickPhysicalDevice(Device& self, vk::SurfaceKHR surface, const DeviceConfig& config) {
-    auto devices = rawHandle(*self.instance).enumeratePhysicalDevices();
+    auto devices = self.instance->instance->enumeratePhysicalDevices();
     if (devices.empty()) throw std::runtime_error("Failed to find GPUs with Vulkan support!");
 
     vk::PhysicalDevice selectedDevice;
@@ -461,7 +458,7 @@ uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const 
 
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent) {
     auto physicalDevice = self.device->physicalDevice;
-    SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, rawHandle(*self.surface));
+    SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, *self.surface->surface);
     if (!isAdequate(support)) throw std::runtime_error("Swapchain support is inadequate");
 
     auto surfaceFormat = chooseSwapSurfaceFormat(support.formats, config);
@@ -470,7 +467,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
     uint32_t imageCount = chooseImageCount(support.capabilities, config);
 
     auto createInfo = vk::SwapchainCreateInfoKHR()
-        .setSurface(rawHandle(*self.surface))
+        .setSurface(*self.surface->surface)
         .setMinImageCount(imageCount)
         .setImageFormat(surfaceFormat.format)
         .setImageColorSpace(surfaceFormat.colorSpace)
@@ -495,7 +492,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
               .setPresentMode(presentMode)
               .setClipped(config.clipped);
 
-    auto vkDevice = rawHandle(*self.device);
+    auto vkDevice = *self.device->device;
     self.swapchain   = vkDevice.createSwapchainKHRUnique(createInfo);
     self.images      = vkDevice.getSwapchainImagesKHR(*self.swapchain);
     self.imageFormat = surfaceFormat.format;
@@ -503,7 +500,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
 
 void createImageViews(Swapchain& self) {
     self.imageViews.resize(self.images.size());
-    auto vkDevice = rawHandle(*self.device);
+    auto vkDevice = *self.device->device;
     for (size_t i = 0; i < self.images.size(); i++) {
         auto createInfo = vk::ImageViewCreateInfo()
             .setImage(self.images[i])

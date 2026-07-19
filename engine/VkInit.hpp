@@ -60,6 +60,8 @@ struct WindowSurface {
     Proof<const Instance>   instance;
     Proof<const GlfwWindow> window;
     vk::UniqueSurfaceKHR    surface;
+
+    static WindowSurface init(Proof<const Instance> instance, Proof<const GlfwWindow> window);
 };
 
 // ── device ──
@@ -87,12 +89,10 @@ struct Device {
     vk::Queue                     presentQueue_AI;
     vk::Queue                     transferQueue_AI;
 
-    explicit Device(Proof<const Instance> instance);
+    static std::unique_ptr<Fact<Device>> init(Proof<const Instance> instance,
+                                              Proof<const WindowSurface> surface,
+                                              DeviceConfig config = {});
     ~Device();                                       // drains the GPU before vkDestroyDevice
-    Device(const Device&)            = delete;
-    Device& operator=(const Device&) = delete;
-    Device(Device&&)                 = delete;
-    Device& operator=(Device&&)      = delete;
 };
 
 // ── command pool ──
@@ -100,6 +100,8 @@ struct Device {
 struct CommandPool {
     Proof<const Device>   device;
     vk::UniqueCommandPool pool;
+
+    static CommandPool init(Proof<const Device> device);
 };
 
 // ── swapchain ──
@@ -115,6 +117,11 @@ struct Swapchain {
     std::vector<vk::UniqueImageView> imageViews;  // owned
     vk::Format                       imageFormat;
     vk::Extent2D                     extent;
+
+    static Swapchain init(Proof<const Device> device,
+                          Proof<const WindowSurface> surface,
+                          vk::Extent2D framebufferExtent,
+                          const SwapchainConfig& config = {});
 };
 
 // ── bring-up verbs ──
@@ -122,21 +129,8 @@ struct Swapchain {
 // The GLFW → Vulkan surface call, kept inside the module so no caller reaches for
 // glfwCreateWindowSurface directly. The returned wrapper retains its instance
 // and window dependencies.
-[[nodiscard]] WindowSurface createWindowSurface(Proof<const Instance> instance,
-                                                Proof<const GlfwWindow> window);
-
-[[nodiscard]] std::unique_ptr<Fact<Device>> makeDevice(
-    Proof<const Instance> instance,
-    Proof<const WindowSurface> surface,
-    DeviceConfig config = {});
-
-[[nodiscard]] std::unique_ptr<CommandPool> makeCommandPool(Proof<const Device> device);
 
 // framebufferExtent is the desired drawable size in pixels (asserted non-zero).
-[[nodiscard]] std::unique_ptr<Swapchain> makeSwapchain(Proof<const Device> device,
-                                                       Proof<const WindowSurface> surface,
-                                                       vk::Extent2D framebufferExtent,
-                                                       const SwapchainConfig& config = {});
 
 // Raw handles for vulkan-hpp interop / third-party backends. The owning
 // UniqueInstance / UniqueDevice stay sealed; callers get the value.
