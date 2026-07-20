@@ -90,6 +90,12 @@ struct Fact {
     explicit Fact(Factory&& makeValue) noexcept(std::is_nothrow_invocable_v<Factory&>)
         : value(makeValue()) {}
 
+    template <typename... Args>
+        requires std::is_constructible_v<T, Args...>
+    explicit Fact(std::in_place_t, Args&&... args)  // _AI
+        noexcept(std::is_nothrow_constructible_v<T, Args...>)
+        : value(std::forward<Args>(args)...) {}
+
     // Proofs point at this object, so its address must stay fixed.
     Fact(const Fact&) = delete;
     Fact& operator=(const Fact&) = delete;

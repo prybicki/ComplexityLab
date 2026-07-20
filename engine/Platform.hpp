@@ -89,9 +89,10 @@ struct GlfwWindow
     ~GlfwWindow();
 
     GlfwWindow(const GlfwWindow&)            = delete;
-    GlfwWindow(GlfwWindow&&)                 = default;
     GlfwWindow& operator=(const GlfwWindow&) = delete;
-    GlfwWindow& operator=(GlfwWindow&&)      = default;
+    // Non-movable: its address is registered with GLFW (window user pointer).
+    GlfwWindow(GlfwWindow&&)                 = delete;
+    GlfwWindow& operator=(GlfwWindow&&)      = delete;
 };
 
 std::vector<GlfwEvent> windowGetEvents(GlfwWindow& window);

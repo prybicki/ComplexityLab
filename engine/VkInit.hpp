@@ -15,16 +15,12 @@ struct Instance {
     InstanceConfig                    config;
     vk::UniqueInstance               instance;
     vk::UniqueDebugUtilsMessengerEXT debugMessenger;
-
-    static Instance init(Proof<const GlfwInitialization>, InstanceConfig config = {});
 };
 
 struct WindowSurface {
     Proof<const Instance>   instance;
     Proof<const GlfwWindow> window;
     vk::UniqueSurfaceKHR    surface;
-
-    static WindowSurface init(Proof<const Instance> instance, Proof<const GlfwWindow> window);
 };
 
 // Obtained through Device
@@ -48,17 +44,12 @@ struct Device {
     vk::Queue             presentQueue_AI;
     vk::Queue             transferQueue_AI;
 
-    static std::unique_ptr<Fact<Device>> init(Proof<const Instance> instance,
-                                              Proof<const WindowSurface> surface,
-                                              DeviceConfig config = {});
     ~Device();
 };
 
 struct CommandPool {
     Proof<const Device>   device;
     vk::UniqueCommandPool pool;
-
-    static CommandPool init(Proof<const Device> device, CommandPoolConfig_AI config_AI = {});
 };
 
 
@@ -70,9 +61,19 @@ struct Swapchain {
     std::vector<vk::UniqueImageView> imageViews;  // owned
     vk::Format                       imageFormat;
     vk::Extent2D                     extent;
+};
 
-    static Swapchain init(Proof<const Device> device,
-                          Proof<const WindowSurface> surface,
-                          vk::Extent2D framebufferExtent,
-                          const SwapchainConfig& config = {});
+struct VkAll {
+    std::unique_ptr<Fact<Instance>>      instance;
+    std::unique_ptr<Fact<WindowSurface>> surface;
+    std::unique_ptr<Fact<Device>>        device;
+    std::unique_ptr<Fact<CommandPool>>   commandPool;
+    std::unique_ptr<Fact<Swapchain>>     swapchain;
+
+    static VkAll init(Proof<const GlfwInitialization> glfw,
+                      Proof<const GlfwWindow> window,
+                      InstanceConfig instanceConfig = {},
+                      DeviceConfig deviceConfig = {},
+                      CommandPoolConfig_AI commandPoolConfig = {},
+                      SwapchainConfig swapchainConfig = {});
 };
