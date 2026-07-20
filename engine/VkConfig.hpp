@@ -105,6 +105,16 @@ struct DeviceConfig {
             }
         },
     };
+
+    std::vector<vk::PhysicalDeviceType> preferredDeviceTypes_AI = {
+        vk::PhysicalDeviceType::eDiscreteGpu,
+        vk::PhysicalDeviceType::eIntegratedGpu,
+        vk::PhysicalDeviceType::eVirtualGpu,
+    };
+};
+
+struct CommandPoolConfig_AI {
+    vk::CommandPoolCreateFlags flags_AI = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
 };
 
 struct SwapchainConfig {

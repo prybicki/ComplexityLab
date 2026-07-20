@@ -57,7 +57,7 @@ struct CommandPool {
     Proof<const Device>   device;
     vk::UniqueCommandPool pool;
 
-    static CommandPool init(Proof<const Device> device);
+    static CommandPool init(Proof<const Device> device, CommandPoolConfig_AI config_AI = {});
 };
 
 

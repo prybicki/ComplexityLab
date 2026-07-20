@@ -44,11 +44,10 @@ PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice devic
 
 // ───────────────────────── device build ────────────────────────────
 
-bool checkDeviceExtensionSupport_AI(vk::PhysicalDevice device_AI,
-                                    const std::vector<const char*>& requiredExtensions_AI);
+bool supportsRequiredExtensions_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI);
 bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI);
-std::optional<PhysicalDevice::QueueFamilyIndices> findSuitableQueueFamilies_AI(
-    vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI, const DeviceConfig& config_AI);
+bool supportsSurface_AI(vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI);
+size_t deviceRank_AI(vk::PhysicalDeviceType deviceType_AI, const DeviceConfig& config_AI);
 PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI,
                                      const DeviceConfig& config_AI);
 void createLogicalDevice_AI(Device& self_AI, const DeviceConfig& config_AI);
@@ -62,12 +61,18 @@ struct SwapChainSupportDetails {
     std::vector<vk::PresentModeKHR>   presentModes;
 };
 
+struct ImageSharing_AI {
+    vk::SharingMode       mode_AI;
+    std::vector<uint32_t> queueFamilyIndices_AI;
+};
+
 SwapChainSupportDetails querySwapchainSupport(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface);
 bool isAdequate(const SwapChainSupportDetails& d) noexcept;
 vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats, const SwapchainConfig& config);
 vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes, const SwapchainConfig& config);
 vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebufferExtent);
 uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const SwapchainConfig& config);
+ImageSharing_AI chooseImageSharing_AI(const PhysicalDevice::QueueFamilyIndices& families_AI);
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent);
 void createImageViews(Swapchain& self);
 
@@ -172,9 +177,9 @@ Device::~Device()
     }
 }
 
-CommandPool CommandPool::init(Proof<const Device> device) {
+CommandPool CommandPool::init(Proof<const Device> device, CommandPoolConfig_AI config_AI) {
     vk::CommandPoolCreateInfo poolInfo{};
-    poolInfo.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+    poolInfo.flags            = config_AI.flags_AI;
     poolInfo.queueFamilyIndex = device->physicalDevice.queueFamilies.graphicsFamily.value();
     auto pool = device->device->createCommandPoolUnique(poolInfo);
     return CommandPool{
@@ -291,11 +296,10 @@ PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice devic
 
 // ───────────────────────── device build ────────────────────────────
 
-bool checkDeviceExtensionSupport_AI(vk::PhysicalDevice device_AI,
-                                    const std::vector<const char*>& requiredExtensions_AI) {
-    const auto availableExtensions_AI = device_AI.enumerateDeviceExtensionProperties();
-    std::set<std::string_view> missingExtensions_AI(requiredExtensions_AI.begin(),
-                                                    requiredExtensions_AI.end());
+bool supportsRequiredExtensions_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI) {
+    const auto availableExtensions_AI = candidate_AI.enumerateDeviceExtensionProperties();
+    std::set<std::string_view> missingExtensions_AI(config_AI.requiredExtensions.begin(),
+                                                    config_AI.requiredExtensions.end());
     for (const auto& extension_AI : availableExtensions_AI) {
         missingExtensions_AI.erase(extension_AI.extensionName.data());
     }
@@ -307,6 +311,12 @@ bool checkDeviceExtensionSupport_AI(vk::PhysicalDevice device_AI,
         }
     }
     return missingExtensions_AI.empty();
+}
+
+bool supportsSurface_AI(vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI) {
+    const auto formats_AI = candidate_AI.getSurfaceFormatsKHR(surface_AI);
+    const auto presentModes_AI = candidate_AI.getSurfacePresentModesKHR(surface_AI);
+    return !formats_AI.empty() && !presentModes_AI.empty();
 }
 
 bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI) {
@@ -337,26 +347,10 @@ bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceCo
         && supportsFeature_AI(&vk::PhysicalDeviceShaderObjectFeaturesEXT::shaderObject);
 }
 
-std::optional<PhysicalDevice::QueueFamilyIndices> findSuitableQueueFamilies_AI(
-    vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI, const DeviceConfig& config_AI) {
-    auto queueFamilies_AI = findQueueFamilies_AI(candidate_AI, surface_AI);
-    if (!familiesComplete(queueFamilies_AI)) {
-        return std::nullopt;
-    }
-    if (!checkDeviceExtensionSupport_AI(candidate_AI, config_AI.requiredExtensions)) {
-        return std::nullopt;
-    }
-
-    const auto formats_AI = candidate_AI.getSurfaceFormatsKHR(surface_AI);
-    const auto presentModes_AI = candidate_AI.getSurfacePresentModesKHR(surface_AI);
-    if (formats_AI.empty() || presentModes_AI.empty()) {
-        return std::nullopt;
-    }
-    if (!supportsRequiredFeatures_AI(candidate_AI, config_AI)) {
-        return std::nullopt;
-    }
-
-    return queueFamilies_AI;
+size_t deviceRank_AI(vk::PhysicalDeviceType deviceType_AI, const DeviceConfig& config_AI) {
+    const auto& preferred_AI = config_AI.preferredDeviceTypes_AI;
+    const auto found_AI = std::find(preferred_AI.begin(), preferred_AI.end(), deviceType_AI);
+    return static_cast<size_t>(found_AI - preferred_AI.begin());
 }
 
 PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI,
@@ -366,38 +360,33 @@ PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::Surf
         throw std::runtime_error("Failed to find GPUs with Vulkan support!");
     }
 
-    vk::PhysicalDevice selectedDevice_AI;
+    const vk::PhysicalDevice* selectedDevice_AI = nullptr;
     PhysicalDevice::QueueFamilyIndices selectedQueueFamilies_AI;
-    vk::PhysicalDevice fallbackDevice_AI;
-    PhysicalDevice::QueueFamilyIndices fallbackQueueFamilies_AI;
 
     for (const auto& candidate_AI : devices_AI) {
-        auto queueFamilies_AI = findSuitableQueueFamilies_AI(candidate_AI, surface_AI, config_AI);
-        if (!queueFamilies_AI) {
+        const auto queueFamilies_AI = findQueueFamilies_AI(candidate_AI, surface_AI);
+        const bool suitable_AI =
+               familiesComplete(queueFamilies_AI)
+            && supportsRequiredExtensions_AI(candidate_AI, config_AI)
+            && supportsRequiredFeatures_AI(candidate_AI, config_AI)
+            && supportsSurface_AI(candidate_AI, surface_AI);
+        if (!suitable_AI) {
             continue;
         }
 
-        const auto properties_AI = candidate_AI.getProperties();
-        if (properties_AI.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-            selectedDevice_AI = candidate_AI;
-            selectedQueueFamilies_AI = std::move(*queueFamilies_AI);
-            break;
-        }
-        if (!fallbackDevice_AI) {
-            fallbackDevice_AI = candidate_AI;
-            fallbackQueueFamilies_AI = std::move(*queueFamilies_AI);
+        if (selectedDevice_AI == nullptr
+            || deviceRank_AI(candidate_AI.getProperties().deviceType, config_AI)
+                 < deviceRank_AI(selectedDevice_AI->getProperties().deviceType, config_AI)) {
+            selectedDevice_AI = &candidate_AI;
+            selectedQueueFamilies_AI = queueFamilies_AI;
         }
     }
 
-    if (!selectedDevice_AI) {
-        selectedDevice_AI = fallbackDevice_AI;
-        selectedQueueFamilies_AI = std::move(fallbackQueueFamilies_AI);
-    }
-    if (!selectedDevice_AI) {
+    if (selectedDevice_AI == nullptr) {
         throw std::runtime_error("Failed to find a suitable GPU!");
     }
 
-    const auto properties_AI = selectedDevice_AI.getProperties();
+    const auto properties_AI = selectedDevice_AI->getProperties();
     spdlog::info("Selected GPU: {} (Type: {})", properties_AI.deviceName.data(),
                  vk::to_string(properties_AI.deviceType));
 
@@ -414,8 +403,8 @@ PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::Surf
 
     return PhysicalDevice{
         std::move(instance_AI),
-        selectedDevice_AI,
-        std::move(selectedQueueFamilies_AI),
+        *selectedDevice_AI,
+        selectedQueueFamilies_AI,
     };
 }
 
@@ -502,6 +491,15 @@ uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities, const 
     return imageCount;
 }
 
+ImageSharing_AI chooseImageSharing_AI(const PhysicalDevice::QueueFamilyIndices& families_AI) {
+    const uint32_t graphicsFamily_AI = families_AI.graphicsFamily.value();
+    const uint32_t presentFamily_AI  = families_AI.presentFamily.value();
+    if (graphicsFamily_AI == presentFamily_AI) {
+        return {vk::SharingMode::eExclusive, {}};
+    }
+    return {vk::SharingMode::eConcurrent, {graphicsFamily_AI, presentFamily_AI}};
+}
+
 void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::Extent2D framebufferExtent) {
     auto physicalDevice = self.device->physicalDevice.handle_AI;
     SwapChainSupportDetails support = querySwapchainSupport(physicalDevice, *self.surface->surface);
@@ -511,6 +509,7 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
     auto presentMode   = chooseSwapPresentMode(support.presentModes, config);
     self.extent        = chooseSwapExtent(support.capabilities, framebufferExtent);
     uint32_t imageCount = chooseImageCount(support.capabilities, config);
+    const auto sharing_AI = chooseImageSharing_AI(self.device->physicalDevice.queueFamilies);
 
     auto createInfo = vk::SwapchainCreateInfoKHR()
         .setSurface(*self.surface->surface)
@@ -519,24 +518,13 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
         .setImageColorSpace(surfaceFormat.colorSpace)
         .setImageExtent(self.extent)
         .setImageArrayLayers(1)
-        .setImageUsage(config.imageUsage);
-
-    const auto& families = self.device->physicalDevice.queueFamilies;
-    uint32_t graphicsFamily = families.graphicsFamily.value();
-    uint32_t presentFamily  = families.presentFamily.value();
-    uint32_t queueFamilyIndices[] = {graphicsFamily, presentFamily};
-    if (graphicsFamily != presentFamily) {
-        createInfo.setImageSharingMode(vk::SharingMode::eConcurrent)
-                  .setQueueFamilyIndexCount(2)
-                  .setPQueueFamilyIndices(queueFamilyIndices);
-    } else {
-        createInfo.setImageSharingMode(vk::SharingMode::eExclusive);
-    }
-
-    createInfo.setPreTransform(support.capabilities.currentTransform)
-              .setCompositeAlpha(config.compositeAlpha)
-              .setPresentMode(presentMode)
-              .setClipped(config.clipped);
+        .setImageUsage(config.imageUsage)
+        .setImageSharingMode(sharing_AI.mode_AI)
+        .setQueueFamilyIndices(sharing_AI.queueFamilyIndices_AI)
+        .setPreTransform(support.capabilities.currentTransform)
+        .setCompositeAlpha(config.compositeAlpha)
+        .setPresentMode(presentMode)
+        .setClipped(config.clipped);
 
     auto vkDevice = *self.device->device;
     self.swapchain   = vkDevice.createSwapchainKHRUnique(createInfo);
