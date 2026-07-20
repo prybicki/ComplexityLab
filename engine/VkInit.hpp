@@ -27,6 +27,7 @@ struct WindowSurface {
     static WindowSurface init(Proof<const Instance> instance, Proof<const GlfwWindow> window);
 };
 
+// Obtained through Device
 struct PhysicalDevice {
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;

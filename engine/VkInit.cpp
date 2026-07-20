@@ -1,9 +1,3 @@
-//==============================================================================
-// VkInit — definitions. See VkInit.hpp for the interface and the bring-up arc.
-// Ported from ComplexityLabVibes/engine/render/VkBackend.{h,cpp}, trimmed to the
-// instance / device / command-pool / swapchain bring-up path.
-//==============================================================================
-
 #include "VkInit.hpp"
 #include "Platform.hpp"
 
@@ -18,14 +12,9 @@
 #include <string_view>
 #include <vector>
 
-// Storage for the dynamic dispatcher — file scope, outside any namespace,
-// because the macro opens namespace vk {} itself. Exactly one definition per
-// program; it lives with instance creation.
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace {
-
-// ───────────────────────── instance build ──────────────────────────
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -34,26 +23,18 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     void* pUserData
 ); // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
 
-// ───────────────────────── queue families ──────────────────────────
-
 bool familiesComplete(const PhysicalDevice::QueueFamilyIndices& q) noexcept;
 bool hasDedicatedTransfer(const PhysicalDevice::QueueFamilyIndices& q) noexcept;
 std::set<uint32_t> uniqueFamilies(const PhysicalDevice::QueueFamilyIndices& q);
-PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice device_AI,
-                                                        vk::SurfaceKHR surface_AI);
-
-// ───────────────────────── device build ────────────────────────────
+PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice device_AI, vk::SurfaceKHR surface_AI);
 
 bool supportsRequiredExtensions_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI);
 bool supportsRequiredFeatures_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI);
 bool supportsSurface_AI(vk::PhysicalDevice candidate_AI, vk::SurfaceKHR surface_AI);
 size_t deviceRank_AI(vk::PhysicalDeviceType deviceType_AI, const DeviceConfig& config_AI);
-PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI,
-                                     const DeviceConfig& config_AI);
+PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::SurfaceKHR surface_AI, const DeviceConfig& config_AI);
 void createLogicalDevice_AI(Device& self_AI, const DeviceConfig& config_AI);
 void createQueueObjects_AI(Device& self_AI);
-
-// ───────────────────────── swapchain build ─────────────────────────
 
 struct SwapChainSupportDetails {
     vk::SurfaceCapabilitiesKHR        capabilities;
@@ -77,8 +58,6 @@ void createSwapchainHandle(Swapchain& self, const SwapchainConfig& config, vk::E
 void createImageViews(Swapchain& self);
 
 }  // namespace
-
-//══════════════════════════ public: bring-up ══════════════════════════
 
 Instance Instance::init(Proof<const GlfwInitialization>, InstanceConfig config)
 {
@@ -202,11 +181,7 @@ Swapchain Swapchain::init(Proof<const Device> device,
     return self;
 }
 
-//══════════════════════ internal: helper definitions ══════════════════════
-
 namespace {
-
-// ───────────────────────── instance build ──────────────────────────
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_vkDebugUtilsMessengerCallbackEXT)
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -228,8 +203,6 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(  // _AI  (signature fixed by PFN_v
     }
     return VK_FALSE;
 }
-
-// ───────────────────────── queue families ──────────────────────────
 
 bool familiesComplete(const PhysicalDevice::QueueFamilyIndices& q) noexcept {
     return q.graphicsFamily.has_value() && q.presentFamily.has_value() && q.transferFamily.has_value();
@@ -293,8 +266,6 @@ PhysicalDevice::QueueFamilyIndices findQueueFamilies_AI(vk::PhysicalDevice devic
 
     return indices_AI;
 }
-
-// ───────────────────────── device build ────────────────────────────
 
 bool supportsRequiredExtensions_AI(vk::PhysicalDevice candidate_AI, const DeviceConfig& config_AI) {
     const auto availableExtensions_AI = candidate_AI.enumerateDeviceExtensionProperties();
@@ -390,9 +361,6 @@ PhysicalDevice pickPhysicalDevice_AI(Proof<const Instance> instance_AI, vk::Surf
     spdlog::info("Selected GPU: {} (Type: {})", properties_AI.deviceName.data(),
                  vk::to_string(properties_AI.deviceType));
 
-    // A CPU-type device is a software rasterizer (e.g. llvmpipe): reaching it
-    // means NO hardware GPU satisfied the engine's requirements, so we fell
-    // through to software rendering — orders of magnitude slower. Warn loudly.
     if (properties_AI.deviceType == vk::PhysicalDeviceType::eCpu) {
         spdlog::warn("Rendering on a CPU software rasterizer ({}) — no hardware GPU met the "
                      "engine's requirements, so performance will be drastically lower than on a "
@@ -436,17 +404,12 @@ void createLogicalDevice_AI(Device& self_AI, const DeviceConfig& config_AI) {
                  hasDedicatedTransfer(queueFamilies_AI));
 }
 
-// Obtain the raw queue handles the device just created. getQueue is idempotent;
-// the submit / timeline / command-ring machinery that OPERATES these queues is a
-// separate runtime module. present aliases graphics when they share a family.
 void createQueueObjects_AI(Device& self_AI) {
     const auto& queueFamilies_AI = self_AI.physicalDevice.queueFamilies;
     self_AI.graphicsQueue_AI = self_AI.device->getQueue(queueFamilies_AI.graphicsFamily.value(), 0);
     self_AI.transferQueue_AI = self_AI.device->getQueue(queueFamilies_AI.transferFamily.value(), 0);
     self_AI.presentQueue_AI = self_AI.device->getQueue(queueFamilies_AI.presentFamily.value(), 0);
 }
-
-// ───────────────────────── swapchain build ─────────────────────────
 
 SwapChainSupportDetails querySwapchainSupport(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface) {
     SwapChainSupportDetails details;
@@ -458,7 +421,7 @@ SwapChainSupportDetails querySwapchainSupport(vk::PhysicalDevice physicalDevice,
 
 bool isAdequate(const SwapChainSupportDetails& d) noexcept { return !d.formats.empty() && !d.presentModes.empty(); }
 
-vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats, const SwapchainConfig& config) {
+vk::SurfaceFormatKHR 1chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats, const SwapchainConfig& config) {
     for (const auto& availableFormat : availableFormats)
         if (availableFormat.format == config.preferredFormat && availableFormat.colorSpace == config.preferredColorSpace)
             return availableFormat;
